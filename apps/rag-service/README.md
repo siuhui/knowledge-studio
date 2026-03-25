@@ -11,9 +11,9 @@
 - `app/api/sources.py`：数据源接口
 - `app/api/index_jobs.py`：索引任务接口
 
-## 启动
+## 本地启动
 ```powershell
-cd E:\project\knowledge-base\apps\rag-service
+cd apps/rag-service
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -24,6 +24,19 @@ Python 版本要求：`3.11.x`（当前建议 `3.11.4`）。
 
 默认数据库：`sqlite:///./knowledge_base.db`
 如需 PostgreSQL：设置环境变量 `KB_DATABASE_URL`。
+
+## Docker 启动（仅服务）
+```powershell
+cd apps/rag-service
+docker build -t kb-rag-service:dev .
+docker run --rm -p 8000:8000 kb-rag-service:dev
+```
+
+## Docker Compose 启动（服务 + 中间件）
+```powershell
+cd infra/docker
+docker compose -f docker-compose.dev.yml up -d --build
+```
 
 ## 示例调用
 ```powershell
@@ -36,4 +49,3 @@ curl -X POST http://127.0.0.1:8000/api/v1/index/jobs -H "Content-Type: applicati
 # 3) 查询 index job
 curl http://127.0.0.1:8000/api/v1/index/jobs/<job_id>
 ```
-

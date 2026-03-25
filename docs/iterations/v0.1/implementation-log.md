@@ -13,6 +13,3 @@
 - 接入真实 connector（local/wiki）任务执行器。
 - 实现 index job worker（queued -> running -> success/failed 状态流转）。
 - 打通 chunk 写入与混合检索最小链路。
-
-- 环境切换：Python 从 3.12 调整为 3.11.4（venv: .venv）。
-

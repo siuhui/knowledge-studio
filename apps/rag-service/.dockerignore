@@ -1,0 +1,15 @@
+﻿.git
+.gitignore
+.idea
+.vscode
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+.env
+knowledge_base.db
+docs
+infra
+libs
