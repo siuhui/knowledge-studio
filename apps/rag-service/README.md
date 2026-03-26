@@ -49,3 +49,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/index/jobs -H "Content-Type: applicati
 # 3) 查询 index job
 curl http://127.0.0.1:8000/api/v1/index/jobs/<job_id>
 ```
+
+
+## Schema 变更记录
+- 见 schema-change-log.md（v0.x 阶段必填）。

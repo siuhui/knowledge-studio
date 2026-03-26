@@ -4,10 +4,11 @@
 1. 全局产品需求：[knowledge-base-rag-ai-prd.md](./product/knowledge-base-rag-ai-prd.md)
 2. 全局技术设计：[overall-technical-design.md](./architecture/overall-technical-design.md)
 3. 开发规范：[development-standards.md](./engineering/development-standards.md)
-4. AI Agent 指令规范：[agent-prompt-playbook.md](./ai/agent-prompt-playbook.md)
-5. 功能文档入口：[features/README.md](./features/README.md)
-6. 迭代文档入口：[iterations/README.md](./iterations/README.md)
-7. 发布映射入口：`docs/releases/<version>/README.md`
+4. FastAPI 开发规范：[fastapi-development-standards.md](./engineering/fastapi-development-standards.md)
+5. AI Agent 指令规范：[agent-prompt-playbook.md](./ai/agent-prompt-playbook.md)
+6. 功能文档入口：[features/README.md](./features/README.md)
+7. 迭代文档入口：[iterations/README.md](./iterations/README.md)
+8. 发布映射入口：`docs/releases/<version>/README.md`
 
 ## 三层文档体系
 - 长期层（事实源）：`docs/features/` 中的功能 PRD/TD

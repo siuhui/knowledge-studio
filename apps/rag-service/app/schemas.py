@@ -1,13 +1,22 @@
-from datetime import datetime
-from typing import Literal
+﻿from datetime import datetime
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
+
+T = TypeVar("T")
 
 
 class ErrorResponse(BaseModel):
     code: str
     message: str
     data: None = None
+    trace_id: str
+
+
+class ApiResponse(BaseModel, Generic[T]):
+    code: str = "OK"
+    message: str
+    data: T
     trace_id: str
 
 
@@ -33,8 +42,21 @@ class IndexJobDetail(BaseModel):
     finished_at: datetime | None = None
 
 
-class ApiResponse(BaseModel):
-    code: str = "OK"
-    message: str
-    data: dict
-    trace_id: str
+class SourceCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    source_type: Literal["local", "wiki"] = "local"
+    sync_mode: Literal["scheduled", "manual"] = "scheduled"
+    status: Literal["active", "paused", "error"] = "active"
+    config_json: str | None = None
+
+
+class SourceItem(BaseModel):
+    id: str
+    name: str
+    source_type: str
+    sync_mode: str
+    status: str
+
+
+class SourceListPayload(BaseModel):
+    items: list[SourceItem]
