@@ -12,3 +12,5 @@
 - 每次迭代开发在 `docs/iterations/` 记录执行计划与决策。
 - 代码合并前，必须将最终结论回写到对应 feature 文档。
 - `docs/releases/` 仅做版本映射，不承载主设计内容。
+
+- kb-user-team-access：用户、团队、知识库访问控制能力。
