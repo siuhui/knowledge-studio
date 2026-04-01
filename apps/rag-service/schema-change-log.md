@@ -19,3 +19,21 @@
 - migration_sql_updated: no
 - backward_compatible: yes
 - notes: 当前为本地原型阶段，未引入 Alembic。
+
+## 2026-03-26
+- date: 2026-03-26
+- author: codex
+- change: 新增用户/团队/知识库权限域模型（users, teams, team_memberships, knowledge_bases, knowledge_base_memberships）。
+- files: `app/models/identity.py`, `infra/db/migrations/0001_init.sql`
+- migration_sql_updated: yes
+- backward_compatible: yes
+- notes: 权限规则为团队成员默认 viewer，`knowledge_base_memberships` 仅承载例外授权（owner/editor/viewer）。
+
+## 2026-04-01
+- date: 2026-04-01
+- author: codex
+- change: 将单文件 `models.py` 和 `schemas.py` 拆分为包目录，按 source/index_job/identity 分域维护，并通过 `__init__.py` 统一导出保持导入兼容。
+- files: `app/models/`, `app/schemas/`, `README.md`
+- migration_sql_updated: no
+- backward_compatible: yes
+- notes: 仅结构重构，无表结构变更。

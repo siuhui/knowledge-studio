@@ -7,7 +7,8 @@
 
 ## 目录
 - `app/main.py`：FastAPI 入口
-- `app/models.py`：SQLAlchemy 数据模型（v0.1 最小集合）
+- `app/models/`：SQLAlchemy 数据模型（按域拆分：source/index_job/identity）
+- `app/schemas/`：请求响应模型（按域拆分：source/index_job/identity）
 - `app/api/sources.py`：数据源接口
 - `app/api/index_jobs.py`：索引任务接口
 

@@ -51,6 +51,52 @@ CREATE TABLE IF NOT EXISTS index_job (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  display_name VARCHAR(255) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+  id UUID PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id),
+  team_id UUID NOT NULL REFERENCES teams(id),
+  role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('team_admin', 'member')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_team_memberships_user_team UNIQUE (user_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+  id UUID PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  owner_team_id UUID NOT NULL REFERENCES teams(id),
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_base_memberships (
+  id UUID PRIMARY KEY,
+  knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id),
+  user_id UUID NOT NULL REFERENCES users(id),
+  role VARCHAR(20) NOT NULL CHECK (role IN ('owner', 'editor', 'viewer')),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_kb_memberships_kb_user UNIQUE (knowledge_base_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS qa_session (
   id UUID PRIMARY KEY,
   user_id VARCHAR(100),
@@ -98,3 +144,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_index_job_source_status ON index_job(source_id, status);
 CREATE INDEX IF NOT EXISTS idx_document_source ON knowledge_document(source_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_doc ON knowledge_chunk(doc_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_kb_owner_team ON knowledge_bases(owner_team_id);
+CREATE INDEX IF NOT EXISTS idx_kb_memberships_kb ON knowledge_base_memberships(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_kb_memberships_user ON knowledge_base_memberships(user_id);
