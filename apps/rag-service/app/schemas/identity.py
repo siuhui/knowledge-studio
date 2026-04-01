@@ -23,6 +23,7 @@ class TeamCreateRequest(BaseModel):
 
 
 class TeamMemberUpsertRequest(BaseModel):
+    operator_user_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     role: Literal["team_admin", "member"] = "member"
 
@@ -58,6 +59,7 @@ class KnowledgeBaseItem(BaseModel):
 
 
 class KnowledgeBaseMemberUpsertRequest(BaseModel):
+    operator_user_id: str = Field(min_length=1)
     user_id: str = Field(min_length=1)
     role: Literal["owner", "editor", "viewer"]
 

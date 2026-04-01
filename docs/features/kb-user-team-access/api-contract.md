@@ -24,6 +24,7 @@
 ```json
 {
   "name": "Team A",
+  "creator_user_id": "uuid",
   "status": "active"
 }
 ```
@@ -32,10 +33,14 @@
 请求：
 ```json
 {
+  "operator_user_id": "uuid",
   "user_id": "uuid",
   "role": "team_admin"
 }
 ```
+
+权限：
+- 仅 `team_admin` 可变更团队成员，越权返回 `PERMISSION_DENIED`。
 
 ### GET /api/v1/teams/{team_id}/members
 返回团队成员列表。
@@ -48,6 +53,7 @@
 {
   "name": "KB-A",
   "owner_team_id": "uuid",
+  "owner_user_id": "uuid",
   "status": "active"
 }
 ```
@@ -61,10 +67,14 @@
 请求：
 ```json
 {
+  "operator_user_id": "uuid",
   "user_id": "uuid",
   "role": "viewer"
 }
 ```
+
+权限：
+- 仅 `owner` 可变更知识库例外授权成员，越权返回 `PERMISSION_DENIED`。
 
 ### GET /api/v1/knowledge-bases/{kb_id}/members
 返回知识库例外授权列表。
@@ -84,3 +94,9 @@
 - `KNOWLEDGE_BASE_NOT_FOUND`
 - `ROLE_INVALID`
 - `PERMISSION_DENIED`
+
+审计事件：
+- `TEAM_CREATE`
+- `TEAM_MEMBER_UPSERT`
+- `KNOWLEDGE_BASE_CREATE`
+- `KNOWLEDGE_BASE_MEMBER_UPSERT`

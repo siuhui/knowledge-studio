@@ -37,3 +37,12 @@
 - migration_sql_updated: no
 - backward_compatible: yes
 - notes: 仅结构重构，无表结构变更。
+
+## 2026-04-01
+- date: 2026-04-01
+- author: codex
+- change: 补齐 Sprint 01 权限与审计：成员授权接口增加操作者字段与越权拦截（`PERMISSION_DENIED`），新增 `audit_log` ORM 写入授权变更审计，补充权限矩阵与越权测试。
+- files: `app/api/teams.py`, `app/api/knowledge_bases.py`, `app/models/audit.py`, `app/services/audit.py`, `app/schemas/identity.py`, `tests/test_access_control.py`, `tests/test_user_team_kb_access.py`
+- migration_sql_updated: no
+- backward_compatible: no
+- notes: `POST /teams/{team_id}/members` 与 `POST /knowledge-bases/{kb_id}/members` 请求体新增必填 `operator_user_id`。
