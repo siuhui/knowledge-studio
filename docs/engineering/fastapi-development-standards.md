@@ -138,3 +138,35 @@ P2：
 - 分层重构（service/repository）
 - 接入鉴权与权限过滤
 - 切换 Alembic（触发条件满足时）
+
+---
+
+## 12. 最小重构模板（已在 v0.1 落地）
+
+目标：统一异常与事务边界，同时避免早期过度抽象。
+
+当前推荐分层：
+- `api/`：参数校验、调用 service、返回 response model。
+- `services/`：业务规则、权限判断、事务边界（写操作）。
+- `models/`：ORM 实体。
+- `repositories/`：暂不强制；当查询复用和复杂度明显上升时再引入。
+
+异常规范：
+- 错误码常量：`app/core/error_codes.py`
+- 业务异常：`app/core/errors.py`
+- 全局映射：`app/core/exceptions.py`
+- 业务层抛 `AppError` 子类，路由层不拼 `HTTPException(detail=...)`。
+
+事务规范：
+- 读操作：不提交事务。
+- 写操作：service 层使用 `app/core/uow.py` 的 `transactional(db)`。
+- 禁止在 API 层直接 `commit/rollback`。
+- 同一用例只在最外层事务提交一次（嵌套调用由 UoW 控制）。
+
+避免过度抽象的边界：
+- 不为简单 CRUD 提前引入 repository 抽象。
+- 不拆分“纯转发” service。
+- 当出现以下信号再升级抽象：
+  - 同类复杂查询在 2 处以上复用；
+  - 单 service 文件超过约 300 行且包含多聚合逻辑；
+  - 事务编排跨 3 个以上模型并需要复用。

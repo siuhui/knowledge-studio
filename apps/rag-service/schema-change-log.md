@@ -46,3 +46,12 @@
 - migration_sql_updated: no
 - backward_compatible: no
 - notes: `POST /teams/{team_id}/members` 与 `POST /knowledge-bases/{kb_id}/members` 请求体新增必填 `operator_user_id`。
+
+## 2026-04-01
+- date: 2026-04-01
+- author: codex
+- change: 引入最小异常规范与事务规范模板：新增统一错误码、业务异常、UoW 事务管理；用户/团队/知识库接口迁移为 API 薄层 + Service 业务层。
+- files: `app/core/error_codes.py`, `app/core/errors.py`, `app/core/uow.py`, `app/core/exceptions.py`, `app/api/users.py`, `app/api/teams.py`, `app/api/knowledge_bases.py`, `app/services/users_service.py`, `app/services/teams_service.py`, `app/services/knowledge_bases_service.py`, `docs/engineering/fastapi-development-standards.md`
+- migration_sql_updated: no
+- backward_compatible: yes
+- notes: 重构仅涉及代码结构与错误处理方式，接口路径和返回结构保持不变。
