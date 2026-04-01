@@ -1,7 +1,11 @@
-﻿# Python
+# Python
 __pycache__/
 *.pyc
 .venv/
+
+# Local databases
+*.db
+*.sqlite3
 
 # IDE
 .vscode/

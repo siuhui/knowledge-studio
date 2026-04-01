@@ -13,3 +13,12 @@
 - 接入真实 connector（local/wiki）任务执行器。
 - 实现 index job worker（queued -> running -> success/failed 状态流转）。
 - 打通 chunk 写入与混合检索最小链路。
+
+## 已完成（2026-04-01）
+- Sprint 02 最小链路落地：`ingest -> chunk -> index`（local 单通道）。
+- 新增 `knowledge_document/knowledge_chunk` ORM 映射并接入检索链路。
+- `POST /api/v1/index/jobs` 触发本地目录索引任务，支持状态流转与任务统计。
+- 新增检索/问答最小 API：
+  - `POST /api/v1/retrieval/query`
+  - `POST /api/v1/qa/ask`
+- 新增测试覆盖：ingest 成功、source 状态校验、检索命中、权限拒绝。

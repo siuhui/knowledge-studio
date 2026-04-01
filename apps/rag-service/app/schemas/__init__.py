@@ -15,6 +15,8 @@ from .identity import (
     UserItem,
 )
 from .index_job import IndexJobCreateRequest, IndexJobDetail, IndexJobPayload
+from .qa import QAAskPayload, QAAskRequest
+from .retrieval import CitationItem, RetrievalQueryPayload, RetrievalQueryRequest
 from .source import SourceCreateRequest, SourceItem, SourceListPayload
 
 __all__ = [
@@ -29,6 +31,11 @@ __all__ = [
     "KnowledgeBaseMemberListPayload",
     "KnowledgeBaseMemberUpsertRequest",
     "PermissionCheckPayload",
+    "CitationItem",
+    "QAAskPayload",
+    "QAAskRequest",
+    "RetrievalQueryPayload",
+    "RetrievalQueryRequest",
     "SourceCreateRequest",
     "SourceItem",
     "SourceListPayload",

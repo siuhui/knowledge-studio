@@ -55,3 +55,21 @@
 - migration_sql_updated: no
 - backward_compatible: yes
 - notes: 重构仅涉及代码结构与错误处理方式，接口路径和返回结构保持不变。
+
+## 2026-04-01
+- date: 2026-04-01
+- author: codex
+- change: 启动 Sprint 02 最小闭环：新增检索与问答接口（`/api/v1/retrieval/query`, `/api/v1/qa/ask`），补齐内容模型映射（`knowledge_document`, `knowledge_chunk`），并加入权限拒绝与引用返回测试。
+- files: `app/models/content.py`, `app/schemas/retrieval.py`, `app/schemas/qa.py`, `app/api/retrieval.py`, `app/api/qa.py`, `app/services/retrieval_service.py`, `app/services/qa_service.py`, `tests/test_retrieval_qa.py`, `docs/iterations/v0.1/sprint-03-retrieval-qa-plan.md`
+- migration_sql_updated: no
+- backward_compatible: yes
+- notes: 当前为原型实现，检索为词项打分，问答为模板编排；后续迭代接入向量检索与 LLM 网关。
+
+## 2026-04-01
+- date: 2026-04-01
+- author: codex
+- change: 补齐 Sprint 02 最小 ingest-index 单通道：新增本地目录 ingestion + chunk 写入 + index_job 状态流转服务，并接入任务 API。
+- files: `app/services/index_jobs_service.py`, `app/api/index_jobs.py`, `app/core/error_codes.py`, `tests/test_ingest_index_pipeline.py`, `docs/iterations/v0.1/sprint-02-ingest-index-plan.md`
+- migration_sql_updated: no
+- backward_compatible: yes
+- notes: 当前仅支持 `local` source（.md/.txt），`wiki` 与 embedding/vector 通道后续迭代。

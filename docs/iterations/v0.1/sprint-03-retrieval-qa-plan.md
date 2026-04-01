@@ -24,7 +24,7 @@
 
 ### D. API 与会话
 - D1: `POST /api/v1/qa/ask`
-- D2: `POST /api/v1/retrieval/search`
+- D2: `POST /api/v1/retrieval/query`
 - D3: session/message 持久化
 
 ### E. 性能优化
@@ -48,3 +48,16 @@
 - QA 接口联调文档
 - 压测报告
 - 回写到 `kb-rag-foundation/prd.md` 与 `td.md`
+
+## 7. 当前状态（2026-04-01）
+- 已完成最小可用闭环（MVP）：
+  - `POST /api/v1/retrieval/query`：按 `kb_id` 范围检索分片并返回 `citation`。
+  - `POST /api/v1/qa/ask`：检索增强回答（模板式）并返回引用。
+  - 读权限校验：无权限统一返回 `PERMISSION_DENIED`。
+- 当前实现边界：
+  - 检索为词项匹配打分（未接入 BM25/向量/重排）。
+  - 生成为模板回答（未接入 LLM 网关）。
+- 测试覆盖：
+  - 检索命中
+  - 问答带引用
+  - 无权限拒绝

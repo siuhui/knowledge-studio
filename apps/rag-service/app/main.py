@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from .api.health import router as health_router
 from .api.index_jobs import router as index_jobs_router
 from .api.knowledge_bases import router as knowledge_bases_router
+from .api.qa import router as qa_router
+from .api.retrieval import router as retrieval_router
 from .api.sources import router as sources_router
 from .api.teams import router as teams_router
 from .api.users import router as users_router
@@ -32,3 +34,5 @@ app.include_router(index_jobs_router)
 app.include_router(users_router)
 app.include_router(teams_router)
 app.include_router(knowledge_bases_router)
+app.include_router(retrieval_router)
+app.include_router(qa_router)

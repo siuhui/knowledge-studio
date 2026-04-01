@@ -46,3 +46,16 @@
 - 功能演示脚本
 - 索引任务看板截图/日志
 - 回写到 `kb-rag-foundation/td.md`
+
+## 7. 当前状态（2026-04-01）
+- 已完成最小可用闭环（MVP）：
+  - `POST /api/v1/index/jobs` 可触发本地目录 ingestion（`local` source）并落库。
+  - 处理链路：read file -> chunk -> 写入 `knowledge_document/knowledge_chunk` -> 更新 `index_job` 状态。
+  - `GET /api/v1/index/jobs/{id}` 可查看任务执行结果与统计（`total_documents/indexed_documents`）。
+- 当前实现边界：
+  - 仅支持 `local` source（`.md/.txt`）。
+  - 未接入 PDF/Word 解析、向量 embedding、pgvector/OpenSearch。
+  - `wiki` connector 仍未实现。
+- 已有回归测试：
+  - 本地目录 ingestion 成功并可被检索。
+  - 非 active source 禁止创建索引任务（`SOURCE_NOT_ACTIVE`）。

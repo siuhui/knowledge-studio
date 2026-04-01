@@ -1,4 +1,5 @@
 from .audit import AuditLog
+from .content import KnowledgeChunk, KnowledgeDocument
 from .identity import (
     KnowledgeBase,
     KnowledgeBaseMembership,
@@ -18,6 +19,8 @@ __all__ = [
     "AuditLog",
     "IndexJob",
     "IndexJobStatus",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
     "KnowledgeBase",
     "KnowledgeBaseMembership",
     "KnowledgeBaseRole",
