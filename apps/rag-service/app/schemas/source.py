@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class SourceCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    source_type: Literal["local", "wiki"] = "local"
+    source_type: Literal["local", "object_storage", "wiki"] = "object_storage"
     sync_mode: Literal["scheduled", "manual"] = "scheduled"
     status: Literal["active", "paused", "error"] = "active"
     config_json: str | None = None

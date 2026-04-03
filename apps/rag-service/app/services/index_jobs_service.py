@@ -11,6 +11,7 @@ from ..core import error_codes
 from ..core.errors import BadRequestError, NotFoundError
 from ..core.uow import transactional
 from ..models import IndexJob, IndexJobStatus, KnowledgeChunk, KnowledgeDocument, KnowledgeSource
+from .uploads_service import mark_uploaded_objects_failed_by_kb, mark_uploaded_objects_indexed_by_kb
 
 
 def _chunk_text(text: str, *, chunk_size: int = 800, overlap: int = 120) -> list[str]:
@@ -50,6 +51,17 @@ def _load_local_config(config_json: str | None) -> tuple[Path, str]:
     return root, kb_id
 
 
+def _extract_kb_id(config_json: str | None) -> str | None:
+    try:
+        obj = json.loads(config_json or "{}")
+    except Exception:
+        return None
+    value = obj.get("kb_id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def _read_local_files(root: Path) -> list[Path]:
     return sorted([path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".md", ".txt"}])
 
@@ -83,6 +95,8 @@ def run_index_job(db: Session, *, job_id: str) -> None:
     source = db.get(KnowledgeSource, job.source_id)
     if source is None:
         raise NotFoundError(code=error_codes.KNOWLEDGE_SOURCE_NOT_FOUND, message=f"source_id {job.source_id} not found")
+
+    kb_id_for_link = _extract_kb_id(source.config_json)
 
     with transactional(db):
         job.status = IndexJobStatus.running
@@ -138,9 +152,14 @@ def run_index_job(db: Session, *, job_id: str) -> None:
             job.status = IndexJobStatus.success
             job.finished_at = dt.datetime.utcnow()
             job.updated_at = dt.datetime.utcnow()
+
+        if kb_id_for_link:
+            mark_uploaded_objects_indexed_by_kb(db=db, kb_id=kb_id_for_link)
     except Exception as exc:
         with transactional(db):
             job.status = IndexJobStatus.failed
             job.error_message = str(exc)[:2000]
             job.finished_at = dt.datetime.utcnow()
             job.updated_at = dt.datetime.utcnow()
+        if kb_id_for_link:
+            mark_uploaded_objects_failed_by_kb(db=db, kb_id=kb_id_for_link, reason=str(exc))

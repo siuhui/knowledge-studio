@@ -14,6 +14,7 @@ from .identity import (
 )
 from .index_job import IndexJob, IndexJobStatus
 from .source import KnowledgeSource
+from .uploaded_object import UploadedObject, UploadedObjectStatus
 
 __all__ = [
     "AuditLog",
@@ -30,6 +31,8 @@ __all__ = [
     "TeamMembership",
     "TeamRole",
     "TeamStatus",
+    "UploadedObject",
+    "UploadedObjectStatus",
     "User",
     "UserStatus",
 ]

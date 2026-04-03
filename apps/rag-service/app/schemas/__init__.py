@@ -18,6 +18,14 @@ from .index_job import IndexJobCreateRequest, IndexJobDetail, IndexJobPayload
 from .qa import QAAskPayload, QAAskRequest
 from .retrieval import CitationItem, RetrievalQueryPayload, RetrievalQueryRequest
 from .source import SourceCreateRequest, SourceItem, SourceListPayload
+from .upload import (
+    UploadCompletePayload,
+    UploadCompleteRequest,
+    UploadPresignPayload,
+    UploadPresignRequest,
+    UploadedObjectItem,
+    UploadedObjectListPayload,
+)
 
 __all__ = [
     "ApiResponse",
@@ -44,6 +52,12 @@ __all__ = [
     "TeamMemberItem",
     "TeamMemberListPayload",
     "TeamMemberUpsertRequest",
+    "UploadCompletePayload",
+    "UploadCompleteRequest",
+    "UploadPresignPayload",
+    "UploadPresignRequest",
+    "UploadedObjectItem",
+    "UploadedObjectListPayload",
     "UserCreateRequest",
     "UserItem",
 ]

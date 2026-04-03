@@ -97,6 +97,23 @@ CREATE TABLE IF NOT EXISTS knowledge_base_memberships (
   CONSTRAINT uq_kb_memberships_kb_user UNIQUE (knowledge_base_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS uploaded_object (
+  id UUID PRIMARY KEY,
+  kb_id UUID NOT NULL REFERENCES knowledge_bases(id),
+  bucket VARCHAR(255) NOT NULL,
+  object_key VARCHAR(1024) NOT NULL,
+  original_filename VARCHAR(255) NOT NULL,
+  content_type VARCHAR(255) NOT NULL,
+  size_bytes INT NOT NULL,
+  etag VARCHAR(255),
+  status VARCHAR(20) NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'indexed', 'failed', 'deleted')),
+  index_error_message TEXT,
+  uploader_user_id UUID REFERENCES users(id),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT uk_uploaded_object_bucket_key UNIQUE (bucket, object_key)
+);
+
 CREATE TABLE IF NOT EXISTS qa_session (
   id UUID PRIMARY KEY,
   user_id VARCHAR(100),
@@ -149,3 +166,4 @@ CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id
 CREATE INDEX IF NOT EXISTS idx_kb_owner_team ON knowledge_bases(owner_team_id);
 CREATE INDEX IF NOT EXISTS idx_kb_memberships_kb ON knowledge_base_memberships(knowledge_base_id);
 CREATE INDEX IF NOT EXISTS idx_kb_memberships_user ON knowledge_base_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploaded_object_kb_status_created ON uploaded_object(kb_id, status, created_at DESC);

@@ -73,3 +73,39 @@
 - migration_sql_updated: no
 - backward_compatible: yes
 - notes: 当前仅支持 `local` source（.md/.txt），`wiki` 与 embedding/vector 通道后续迭代。
+
+## 2026-04-02
+- date: 2026-04-02
+- author: codex
+- change: 新增对象存储上传流程接口（预签名上传/完成回调），并对齐上传与 ingest 文档。
+- files: `app/api/uploads.py`, `app/services/uploads_service.py`, `app/schemas/upload.py`, `app/schemas/source.py`, `app/config.py`, `docs/features/kb-rag-foundation/upload-workflow.md`, `docs/features/kb-rag-foundation/api-contract.md`, `docs/features/kb-rag-foundation/prd.md`, `docs/features/kb-rag-foundation/td.md`
+- migration_sql_updated: no
+- backward_compatible: yes
+- notes: 上传接口先实现最小闭环；完成回调目前为幂等确认，后续扩展上传元数据持久化。
+
+## 2026-04-02
+- date: 2026-04-02
+- author: codex
+- change: 强化上传预签名安全校验与对象键规范：新增 `user_id` 权限校验、文件名/扩展名/content-type 校验、`object_key` 作用域校验；统一 key 规则为 `kb/{kb_id}/{kb_slug}/raw/{yyyymmdd}/{ulid}_{filename}`。
+- files: `app/services/uploads_service.py`, `app/schemas/upload.py`, `app/core/error_codes.py`, `app/api/uploads.py`, `tests/test_uploads.py`, `tests/test_uploads_integration.py`, `docs/features/kb-rag-foundation/api-contract.md`, `docs/features/kb-rag-foundation/upload-workflow.md`
+- migration_sql_updated: no
+- backward_compatible: no
+- notes: `POST /api/v1/uploads/presign` 请求体新增必填 `user_id`。
+
+## 2026-04-03
+- date: 2026-04-03
+- author: codex
+- change: 上传链路增强 P0/P1：切换为 `presigned POST`（含大小限制），`complete` 增加 `head_object` 存在性/大小/ContentType 校验；object_key 改为 `ulid+hash+ext`，原始文件名写入对象元数据。
+- files: `app/services/uploads_service.py`, `app/config.py`, `app/core/error_codes.py`, `app/schemas/upload.py`, `tests/test_uploads.py`, `tests/test_uploads_integration.py`, `docs/features/kb-rag-foundation/api-contract.md`, `docs/features/kb-rag-foundation/upload-workflow.md`
+- migration_sql_updated: no
+- backward_compatible: no
+- notes: `uploads/presign` 响应增加 `upload_method/upload_fields/max_size_bytes`，前端上传方式从 PUT URL 调整为 multipart POST。
+
+## 2026-04-03
+- date: 2026-04-03
+- author: codex
+- change: 新增上传资产台账 `uploaded_object`，`complete` 阶段落库（幂等 upsert），补充上传管理接口（列表/详情/删除），并打通 `index_job` 成功/失败状态回写（`uploaded -> indexed/failed`）。
+- files: `app/models/uploaded_object.py`, `app/models/__init__.py`, `app/services/uploads_service.py`, `app/services/index_jobs_service.py`, `app/api/uploads.py`, `app/schemas/upload.py`, `app/schemas/__init__.py`, `app/core/error_codes.py`, `infra/db/migrations/0001_init.sql`, `tests/test_uploads.py`, `tests/test_ingest_index_pipeline.py`, `docs/features/kb-rag-foundation/api-contract.md`
+- migration_sql_updated: yes
+- backward_compatible: no
+- notes: `POST /api/v1/uploads/complete` 请求体新增可选 `uploader_user_id`；上传管理接口当前通过 `user_id` 查询参数做权限校验。

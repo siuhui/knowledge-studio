@@ -9,6 +9,7 @@ from .api.qa import router as qa_router
 from .api.retrieval import router as retrieval_router
 from .api.sources import router as sources_router
 from .api.teams import router as teams_router
+from .api.uploads import router as uploads_router
 from .api.users import router as users_router
 from .config import settings
 from .core.exceptions import register_exception_handlers
@@ -34,5 +35,6 @@ app.include_router(index_jobs_router)
 app.include_router(users_router)
 app.include_router(teams_router)
 app.include_router(knowledge_bases_router)
+app.include_router(uploads_router)
 app.include_router(retrieval_router)
 app.include_router(qa_router)
