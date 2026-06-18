@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+*.egg
+
+# Environment
+.env*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.coverage.*
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+apps/web/node_modules/
+apps/web/.pnpm-store/
+
+# Build
+*.tsbuildinfo
+next-env.d.ts
+
+# Infrastructure
+infra/data/
+
+# Docker
+Dockerfile.*.local
+.dockerignore.local

@@ -1,0 +1,27 @@
+# 开发模式覆盖 — 与 docker-compose.yml 合并使用
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d
+
+services:
+  db:
+    volumes:
+      - ./data/pg:/var/lib/postgresql/data
+
+  minio:
+    volumes:
+      - ./data/minio:/data
+
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ../apps/api/app:/app/app
+
+  web:
+    build: !reset null
+    image: node:24-alpine
+    working_dir: /app
+    command: >
+      sh -c "npm install -g pnpm@11.8.0 && pnpm install && pnpm dev"
+    volumes:
+      - ../apps/web:/app
+      - /app/node_modules
+      - /app/.next

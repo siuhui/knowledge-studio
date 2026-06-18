@@ -1,0 +1,16 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.0
+pgvector>=0.3.0
+psycopg2-binary>=2.9.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+python-multipart>=0.0.12
+structlog>=24.0.0
+PyMuPDF>=1.24.0
+charset-normalizer>=3.0.0
+openai>=1.50.0
+anthropic>=0.30.0
+watchfiles>=1.0.0
