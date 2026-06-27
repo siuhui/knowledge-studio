@@ -40,4 +40,9 @@ class Document(Base):
     )
 
     source = relationship("Source", back_populates="documents")
-    chunks = relationship("Chunk", back_populates="document", lazy="selectin")
+    chunks = relationship(
+        "Chunk",
+        back_populates="document",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )

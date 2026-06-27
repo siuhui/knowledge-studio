@@ -1,6 +1,6 @@
 """LLM provider abstraction.
 
-v0.1 supports OpenAI and Anthropic chat APIs.
+v0.1.0 supports OpenAI and Anthropic chat APIs.
 """
 
 from typing import Protocol

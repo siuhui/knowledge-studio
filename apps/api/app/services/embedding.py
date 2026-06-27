@@ -1,6 +1,6 @@
 """Embedding provider abstraction.
 
-v0.1 ships with an OpenAI-compatible embedder. Swap implementations by
+v0.1.0 ships with an OpenAI-compatible embedder. Swap implementations by
 changing the `embedder` module-level instance at startup.
 """
 
@@ -61,7 +61,7 @@ def _create_embedder() -> Embedder:
     if provider == "openai":
         return OpenAIEmbedder()
     elif provider == "anthropic":
-        raise NotImplementedError("Anthropic embedding not yet supported in v0.1")
+        raise NotImplementedError("Anthropic embedding not yet supported")
     else:
         raise ValueError(f"Unknown embedding provider: {provider}")
 

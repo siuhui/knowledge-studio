@@ -31,4 +31,9 @@ class KnowledgeBase(Base):
     )
 
     owner = relationship("User", back_populates="knowledge_bases")
-    sources = relationship("Source", back_populates="knowledge_base", lazy="selectin")
+    sources = relationship(
+        "Source",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )

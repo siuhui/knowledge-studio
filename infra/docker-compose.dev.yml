@@ -19,6 +19,9 @@ services:
     build: !reset null
     image: node:24-alpine
     working_dir: /app
+    environment:
+      - WATCHPACK_POLLING=true
+      - CHOKIDAR_USEPOLLING=true
     command: >
       sh -c "npm install -g pnpm@11.8.0 && pnpm install && pnpm dev"
     volumes:

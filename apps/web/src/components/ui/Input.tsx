@@ -22,7 +22,7 @@ export function Input({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       required={required}
-      className={`w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-200/60 bg-white px-4 py-2.5 text-sm text-[#2F3437] placeholder:text-gray-400 transition-all duration-150 focus:border-gray-400 focus:ring-0 focus:outline-none ${className}`}
     />
   );
 }

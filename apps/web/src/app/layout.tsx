@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/hooks/useAuth";
+import { ToastProvider } from "@/hooks/useToast";
 import { Navbar } from "@/components/layout/Navbar";
 import "@/styles/globals.css";
 
@@ -15,12 +16,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-gray-50">
+      <body className="min-h-screen bg-[#FBFBFA] text-[#2F3437]">
         <AuthProvider>
-          <Navbar />
-          <main className="container mx-auto px-4 py-8 max-w-4xl">
-            {children}
-          </main>
+          <ToastProvider>
+            <Navbar />
+            <main>{children}</main>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

@@ -9,7 +9,7 @@ from app.services.knowledge_base_service import KnowledgeBaseService
 
 logger = structlog.get_logger(__name__)
 
-SUPPORTED_SOURCE_TYPES = {"upload"}  # v0.1 only upload
+SUPPORTED_SOURCE_TYPES = {"upload"}  # v0.1.0 only upload
 
 
 class SourceService:
@@ -30,7 +30,7 @@ class SourceService:
         if type not in SUPPORTED_SOURCE_TYPES:
             raise ValidationError(
                 code=ResponseCode.SOURCE_TYPE_UNSUPPORTED,
-                message=f"Source type '{type}' is not supported in v0.1",
+                message=f"Source type '{type}' is not supported in v0.1.0",
             )
 
         source = Source(

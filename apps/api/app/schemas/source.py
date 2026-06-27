@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class SourceCreate(BaseModel):
-    type: str = Field(default="upload", pattern="^(upload)$")  # v0.1 only upload
+    type: str = Field(default="upload", pattern="^(upload)$")  # v0.1.0 only upload
     config: dict = Field(default_factory=dict)
 
 

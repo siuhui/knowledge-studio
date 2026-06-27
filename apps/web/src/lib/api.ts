@@ -1,4 +1,4 @@
-import { ApiError } from "./types";
+import { ApiError, type PaginatedMeta } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -31,6 +31,29 @@ export async function api<T>(
   return { data: (await res.json()).data as T, requestId: rid };
 }
 
+export async function apiPaginated<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<{ data: T[]; meta: PaginatedMeta; requestId: string }> {
+  const requestId = crypto.randomUUID();
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+      ...getAuthHeader(),
+      ...options?.headers,
+    },
+    ...options,
+  });
+  const rid = res.headers.get("X-Request-ID") || requestId;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
+    throw new ApiError(err.code, err.message, res.status, rid);
+  }
+  const body = await res.json();
+  return { data: body.data as T[], meta: body.meta as PaginatedMeta, requestId: rid };
+}
+
 export async function uploadFile(
   path: string,
   file: File,
@@ -47,12 +70,7 @@ export async function uploadFile(
     method: "POST",
     headers: {
       "X-Request-ID": requestId,
-      ...(typeof window !== "undefined"
-        ? (() => {
-            const token = localStorage.getItem("kb_access_token");
-            return token ? { Authorization: `Bearer ${token}` } : {};
-          })()
-        : {}),
+      ...getAuthHeader(),
     },
     body: formData,
   });

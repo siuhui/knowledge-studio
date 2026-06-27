@@ -37,4 +37,9 @@ class Source(Base):
     )
 
     knowledge_base = relationship("KnowledgeBase", back_populates="sources")
-    documents = relationship("Document", back_populates="source", lazy="selectin")
+    documents = relationship(
+        "Document",
+        back_populates="source",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )

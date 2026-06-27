@@ -14,36 +14,34 @@ export function Navbar() {
   };
 
   return (
-    <nav className="bg-white border-b border-gray-200">
-      <div className="container mx-auto px-4 max-w-4xl flex items-center justify-between h-14">
-        <Link href="/" className="font-bold text-lg text-gray-900">
+    <nav className="sticky top-0 z-40 bg-[#FBFBFA]/80 backdrop-blur-sm border-b border-gray-200/60">
+      <div className="flex items-center justify-between h-12 px-6">
+        <Link
+          href="/"
+          className="font-semibold text-sm tracking-tight text-[#1A1A1A]"
+        >
           KnowledgeBase
         </Link>
         <div className="flex items-center gap-4">
           {isLoading ? null : user ? (
-            <>
-              <Link
-                href="/knowledge-bases"
-                className="text-sm text-gray-600 hover:text-gray-900"
-              >
-                Knowledge Bases
-              </Link>
-              <span className="text-sm text-gray-400">{user?.username}</span>
-              <button
-                onClick={handleLogout}
-                className="text-sm text-gray-500 hover:text-red-600 transition-colors"
-              >
-                Logout
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+            >
+              Logout
+            </button>
           ) : (
             <>
-              <Link href="/login" className="text-sm text-gray-600 hover:text-gray-900">
-                Sign In
+              <Link
+                href="/login"
+                className="text-xs text-gray-500 hover:text-[#2F3437] transition-colors"
+              >
+                Sign in
               </Link>
               <Link
                 href="/register"
-                className="text-sm rounded-lg border px-3 py-1 text-gray-600 hover:bg-gray-100"
+                className="text-xs rounded-lg border border-gray-200/60 px-3 py-1 text-gray-500 hover:text-[#2F3437] hover:bg-gray-100/70 transition-all"
               >
                 Register
               </Link>

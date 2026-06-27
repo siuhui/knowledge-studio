@@ -66,6 +66,13 @@ export interface PaginatedResponse<T> {
   };
 }
 
+export interface PaginatedMeta {
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
 export class ApiError extends Error {
   code: string;
   status: number;

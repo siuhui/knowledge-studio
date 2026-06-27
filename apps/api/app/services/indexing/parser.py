@@ -1,6 +1,6 @@
 """Document parsers: convert raw bytes → plain text.
 
-Parser Protocol + format registry. v0.1 supports PDF, Markdown, plain text.
+Parser Protocol + format registry. v0.1.0 supports PDF, Markdown, plain text.
 """
 
 from typing import Protocol

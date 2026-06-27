@@ -37,9 +37,9 @@ User ──1:N──> KnowledgeBase ──1:N──> Source ──1:N──> Doc
 |------|------|------|
 | id | UUID | PK |
 | knowledge_base_id | UUID FK → knowledge_base | 归属 |
-| type | enum(`upload`, `url`, `github`) | 数据源类型（v0.1 仅启用 `upload`，`url`/`github` 预留给 v0.2） |
+| type | enum(`upload`, `url`, `github`) | 数据源类型（v0.1.0 仅启用 `upload`，`url`/`github` 预留给 0.2.0） |
 | config | JSON | 类型相关配置 |
-| source_hash | str(64)? | SHA-256 原始文件哈希（预留，v0.2 启用去重） |
+| source_hash | str(64)? | SHA-256 原始文件哈希（预留，v0.2.0 启用去重） |
 | status | enum(`active`,`inactive`,`error`) | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -119,7 +119,7 @@ content_hash       → "解析结果变没变？"     → 决定是否重新 chu
 升级解析器后 A.pdf → 解析出 "Hello World !" → content_hash = "def456" ≠ "abc123" → 重新索引
 ```
 
-source_hash 的逻辑（原始文件去重）留到 v0.2 启用，那时候数据源类型多了（GitHub/URL 定时同步），文件级去重才有实际价值。
+source_hash 的逻辑（原始文件去重）留到 v0.2.0 启用，那时候数据源类型多了（GitHub/URL 定时同步），文件级去重才有实际价值。
 
 ---
 

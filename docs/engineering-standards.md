@@ -226,6 +226,22 @@ feat: add auth register and login endpoints
 
 每个端点至少一个 happy-path 测试。
 
+### 3.4 版本规范
+
+遵循 Semantic Versioning（`MAJOR.MINOR.PATCH`）：
+
+- **开发期** (`0.y.z`)：API 不稳定，任何东西都可能变
+- **MINOR**：一组 feat 聚合为一个版本（按里程碑发布），一个 `MINOR` 可包含多个 feat
+- **PATCH**：bug fix 后 bump
+- **MAJOR**：API 稳定后发布 `1.0.0`
+
+格式规则：
+- `pyproject.toml` / `package.json` / 程序字段 → `0.1.0`（机器可读，无 `v` 前缀）
+- 文档 / 注释 / 用户可见消息 → `v0.1.0`（人读，加 `v` 前缀）
+- Git tag → `v0.1.0`
+
+示例：`0.1.0`（首个 MVP）→ `0.2.0`（新增 GitHub/URL 数据源）→ `0.2.1`（修一个检索 bug）→ `1.0.0`（API 稳定）。
+
 ---
 
 ## 4. 命令速查
@@ -298,209 +314,27 @@ open http://localhost:8000/redoc    # ReDoc
 
 ### 5.2 配置管理
 
-使用 **pydantic-settings + .env + 环境变量覆盖 + 单例** 模式。
+#### 技术选型
 
-#### 5.2.1 目录结构
+**pydantic-settings + .env + 环境变量覆盖 + 模块级单例**。
 
-```
-apps/api/
-├── .env.example             # 模板，提交（列出所有必填字段 + 占位值，写清楚每个变量的含义）
-├── .env                     # 本地开发配置，gitignore（从 .env.example 复制后填入真实值）
-├── .env.local               # 本地敏感覆盖，gitignore（密钥类变量，可选）
-├── app/
-│   └── core/
-│       └── config.py        # Settings 定义
-```
+#### 文件结构
 
-#### 5.2.2 配置定义
+- `app/config.py` — Settings 类定义 + 模块级单例 `settings`
+- `.env.example` — 模板（提交），列出所有字段及注释
+- `.env` — 本地配置（gitignore），从 `.env.example` 复制并填入真实值
+- `.env.local` — 本地敏感覆盖（gitignore，可选），优先级高于 `.env`
 
-```python
-# app/core/config.py
-from pydantic import SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+#### 规则
 
-
-class DatabaseConfig(BaseSettings):
-    url: str  # 无默认值，必须由环境变量提供
-    pg_vector_extension: str = "vector"  # pgvector 扩展名
-
-
-class JWTConfig(BaseSettings):
-    secret: SecretStr
-    algorithm: str
-    expiry_minutes: int
-
-
-class ObjectStorageConfig(BaseSettings):
-    endpoint: str
-    access_key: str
-    secret_key: SecretStr
-    bucket: str
-    region: str
-    presign_expire_seconds: int
-    max_upload_size_bytes: int
-
-
-class LLMConfig(BaseSettings):
-    provider: str = "openai"                       # openai | anthropic
-    api_key: SecretStr
-    base_url: str | None = None                    # API 代理地址（可选）
-    chat_model: str = "gpt-4o-mini"                # LLM 对话模型
-    embedding_model: str = "text-embedding-3-small"  # Embedding 模型
-    embedding_dimension: int = 1536                # 向量维度，与 pgvector 对齐
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="KB_",
-        env_file=(".env", ".env.local"),     # 都是 gitignore，由 .env.example 复制
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
-
-    app_name: str
-    env: str
-    debug: bool
-
-    database: DatabaseConfig = DatabaseConfig()
-    jwt: JWTConfig = JWTConfig()
-    llm: LLMConfig = LLMConfig()
-    object_storage: ObjectStorageConfig = ObjectStorageConfig()
-    cors_origins: list[str]
-
-    @field_validator("env")
-    @classmethod
-    def validate_env(cls, v: str) -> str:
-        if v not in ("dev", "test", "prod"):
-            raise ValueError(f"env must be dev/test/prod, got {v}")
-        return v
-
-
-settings = Settings()  # 模块级单例，Python import 天然缓存，只跑一次
-```
-
-#### 5.2.3 使用示例
-
-```python
-# 直接导入单例
-from app.core.config import settings
-
-settings.database.url              # "postgresql://postgres:postgres@localhost:5432/knowledgebase"
-settings.jwt.secret.get_secret_value()  # 显式解包
-settings.llm.provider                   # "openai"
-settings.llm.chat_model                 # "gpt-4o-mini"
-settings.llm.embedding_model            # "text-embedding-3-small"
-settings.object_storage.endpoint        # "http://localhost:9000"
-```
-
-#### 5.2.4 配置加载规则
-
-```
-.env.example  ──copy──>  .env  ──override──>  .env.local  ──override──>  process ENV
-  (提交，模板)           (gitignore)          (gitignore)                  (Docker)
-```
-
-#### 5.2.5 .env.example 模板
-
-```bash
-# .env.example — 模板，提交到仓库
-# 复制为 .env 后填入真实值
-
-# 应用
-KB_APP_NAME=KnowledgeBase
-KB_ENV=dev                    # dev | test | prod
-KB_DEBUG=true
-
-# 数据库（嵌套字段用 __ 展开）
-KB_DATABASE__URL=postgresql://postgres:postgres@localhost:5432/knowledgebase
-KB_DATABASE__PG_VECTOR_EXTENSION=vector
-
-# LLM / Embedding（API）
-KB_LLM__PROVIDER=openai                          # openai | anthropic
-KB_LLM__API_KEY=sk-your-api-key
-KB_LLM__BASE_URL=                                # 可选，API 代理地址
-KB_LLM__CHAT_MODEL=gpt-4o-mini
-KB_LLM__EMBEDDING_MODEL=text-embedding-3-small
-KB_LLM__EMBEDDING_DIMENSION=1536
-
-# JWT
-KB_JWT__SECRET=change-me-to-a-random-string
-KB_JWT__ALGORITHM=HS256
-KB_JWT__EXPIRY_MINUTES=1440   # 24 小时
-
-# 对象存储（MinIO 或 S3 兼容）
-KB_OBJECT_STORAGE__ENDPOINT=http://localhost:9000
-KB_OBJECT_STORAGE__ACCESS_KEY=minioadmin
-KB_OBJECT_STORAGE__SECRET_KEY=your-secret-key
-KB_OBJECT_STORAGE__BUCKET=kb-source
-KB_OBJECT_STORAGE__REGION=us-east-1
-KB_OBJECT_STORAGE__PRESIGN_EXPIRE_SECONDS=900
-KB_OBJECT_STORAGE__MAX_UPLOAD_SIZE_BYTES=20971520
-
-# CORS
-KB_CORS_ORIGINS=["http://localhost:3000"]
-```
-
-#### 5.2.6 .env（本地开发，gitignore）
-
-```bash
-# .env — 从 .env.example 复制，填入本地真实值
-# 不要提交！
-
-KB_APP_NAME=KnowledgeBase
-KB_ENV=dev
-KB_DEBUG=true
-KB_DATABASE__URL=postgresql://postgres:postgres@localhost:5432/knowledgebase
-KB_DATABASE__PG_VECTOR_EXTENSION=vector
-KB_LLM__PROVIDER=openai
-KB_LLM__API_KEY=sk-your-api-key
-KB_LLM__CHAT_MODEL=gpt-4o-mini
-KB_LLM__EMBEDDING_MODEL=text-embedding-3-small
-KB_LLM__EMBEDDING_DIMENSION=1536
-KB_JWT__SECRET=my-local-dev-secret-dont-use-in-prod
-KB_JWT__ALGORITHM=HS256
-KB_JWT__EXPIRY_MINUTES=1440
-KB_OBJECT_STORAGE__ENDPOINT=http://localhost:9000
-KB_OBJECT_STORAGE__ACCESS_KEY=minioadmin
-KB_OBJECT_STORAGE__SECRET_KEY=minioadmin
-KB_OBJECT_STORAGE__BUCKET=kb-source
-KB_OBJECT_STORAGE__REGION=us-east-1
-KB_OBJECT_STORAGE__PRESIGN_EXPIRE_SECONDS=900
-KB_OBJECT_STORAGE__MAX_UPLOAD_SIZE_BYTES=20971520
-KB_CORS_ORIGINS=["http://localhost:3000"]
-```
-
-#### 5.2.7 .env.local（可选，本地敏感覆盖，gitignore）
-
-```bash
-# .env.local — 比 .env 优先级更高，放密钥
-# 不要提交！
-
-KB_JWT__SECRET=supersecret-real-key
-KB_OBJECT_STORAGE__SECRET_KEY=real-s3-secret
-```
-
-嵌套结构通过 `__` 双下划线展开：
-```
-KB_DATABASE__URL → settings.database.url
-KB_LLM__API_KEY → settings.llm.api_key
-KB_LLM__CHAT_MODEL → settings.llm.chat_model
-KB_JWT__EXPIRY_MINUTES → settings.jwt.expiry_minutes
-```
-
-#### 5.2.8 要点
-
-| 原则 | 说明 |
-|------|------|
-| 不硬编码默认值 | 代码中所有字段声明不带 `=` 默认值，值全部从 `.env` / 环境变量读取，缺失则在启动时报错 |
-| 配置分组 | 按领域拆 `DatabaseConfig` / `JWTConfig` / `ObjectStorageConfig`，不在一个平铺类里堆 30 个字段 |
-| 敏感字段 | 用 `SecretStr`，打印时不泄露，取值需显式调用 `.get_secret_value()` |
-| 环境隔离 | 通过 `KB_ENV=dev/test/prod` 区分，不在代码里写死 |
-| 单例 | 模块级 `settings = Settings()`，Python 模块 import 天然缓存，不需要 `@lru_cache` |
-| 校验 | 用 `@field_validator` 在启动时校验，早失败而不是运行时崩 |
-| 模板 | `.env.example` 提交（列出所有字段 + 注释），`.env` / `.env.local` gitignore |
-| Docker | 容器环境直接传环境变量，pydantic-settings 自动读取，`env_file` 找不到时静默跳过 |
+- **导入路径**：`from app.config import settings`，模块级单例，全项目直接引用
+- **环境变量前缀**：`KB_`，嵌套字段用 `__` 展开（如 `KB_DATABASE__URL` → `settings.database.url`）
+- **配置分组**：按领域拆嵌套类（`DatabaseConfig` / `JWTConfig` / `LLMConfig` / `ObjectStorageConfig`），不在平铺类堆字段
+- **无默认值**：必填字段声明时不带 `=`，缺失则启动时报错；基础设施类字段（如 `auto_create_tables`）是例外
+- **敏感字段**：用 `pydantic.SecretStr`，取值需调用 `.get_secret_value()`
+- **环境隔离**：通过 `KB_ENV` 字段区分（`dev` / `test` / `prod`），启动时 `@field_validator` 校验
+- **加载优先级**：`.env.example`（模板）→ `.env`（本地）→ `.env.local`（敏感覆盖）→ 进程环境变量（Docker）
+- **.env.example 提交**，`.env` 和 `.env.local` gitignore
 
 ### 5.3 分层约束
 
@@ -871,7 +705,7 @@ app/
 └── core/
 ```
 
-**v0.x ~ v1.0 不需要这个**。留在文档里备忘即可。
+**v0.x ~ v1.0.0 不需要这个**。留在文档里备忘即可。
 
 ---
 
@@ -890,7 +724,7 @@ app/
 
 - **不用 RAG 框架**（LangChain / LlamaIndex）。管线逻辑自写，直接控制每一步。
 - 每步是可替换的抽象，不绑死具体实现。
-- v0.1 克制：只支持可复制文本的 PDF、Markdown、纯文本。
+- v0.1.0 克制：只支持可复制文本的 PDF、Markdown、纯文本。
 
 ### 10.2 文档解析（Source → Document）
 
@@ -921,7 +755,7 @@ PARSERS: dict[str, Parser] = {
 | Markdown | **自写 parser** | 去 frontmatter、图片链接，保留标题层级（标题对后续 chunk 有价值）。不需要 `markdown-it-py` 转 HTML——从 Markdown 到纯文本的信息损失可以接受 |
 | Plain Text | **自写** | UTF-8 → GB18030 回退解码；编码检测用 `charset-normalizer`（`pip install charset-normalizer`）
 
-#### v0.1 明确不支持
+#### v0.1.0 明确不支持
 
 - OCR / 扫描版 PDF（得到的可能是空字符串，需在文档中告知用户）
 - DOCX / PPTX / EPUB / HTML
@@ -937,7 +771,7 @@ overlap    = 50 tokens
 splitter   = 按段落边界切；段落超长再按句子切
 ```
 
-v0.1 的文件以技术文档为主，段落本身就是自然的语义边界，无需 LangChain 的 `RecursiveCharacterTextSplitter`——自写 20 行。
+v0.1.0 的文件以技术文档为主，段落本身就是自然的语义边界，无需 LangChain 的 `RecursiveCharacterTextSplitter`——自写 20 行。
 
 ### 10.4 向量化（Embedding）
 
@@ -952,7 +786,7 @@ class Embedder(Protocol):
 
 - 默认：OpenAI `text-embedding-3-small`（1536 维）或 Anthropic 对应模型
 - 通过抽象层可配置切换，换模型只改配置 + DDL 向量维度
-- 不在 v0.1 引入本地模型（sentence-transformers 需要 GPU 才实用，CPU 批处理 100 页偏慢且占内存）
+- 不在 v0.1.0 引入本地模型（sentence-transformers 需要 GPU 才实用，CPU 批处理 100 页偏慢且占内存）
 
 ### 10.5 检索（Retrieval）
 
@@ -981,7 +815,7 @@ def hybrid_search(db, query: str, query_emb: list[float], top_k: int = 10):
     return rrf_fusion(vec.all(), kw.all(), top_k=top_k)
 ```
 
-### 10.6 依赖清单（v0.1 新增）
+### 10.6 依赖清单（v0.1.0 新增）
 
 ```
 PyMuPDF                  # PDF 解析
