@@ -1,7 +1,7 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.error_codes import ErrorCode
+from app.core.response_codes import ResponseCode
 from app.core.errors import ConflictError, UnauthorizedError
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.models.user import User
@@ -16,7 +16,7 @@ class AuthService:
         existing = UserRepository.get_by_username(db, username=username)
         if existing:
             raise ConflictError(
-                code=ErrorCode.USERNAME_TAKEN,
+                code=ResponseCode.USERNAME_TAKEN,
                 message=f"Username '{username}' is already taken",
             )
 
@@ -33,7 +33,7 @@ class AuthService:
         user = UserRepository.get_by_username(db, username=username)
         if not user or not verify_password(password, user.password_hash):
             raise UnauthorizedError(
-                code=ErrorCode.INVALID_CREDENTIALS,
+                code=ResponseCode.INVALID_CREDENTIALS,
                 message="Invalid username or password",
             )
 
@@ -48,19 +48,19 @@ class AuthService:
             user_id = payload.get("sub")
             if not user_id:
                 raise UnauthorizedError(
-                    code=ErrorCode.TOKEN_INVALID,
+                    code=ResponseCode.TOKEN_INVALID,
                     message="Invalid token: missing subject",
                 )
         except Exception:
             raise UnauthorizedError(
-                code=ErrorCode.TOKEN_INVALID,
+                code=ResponseCode.TOKEN_INVALID,
                 message="Invalid or expired token",
             )
 
         user = UserRepository.get_by_id(db, user_id=user_id)
         if not user:
             raise UnauthorizedError(
-                code=ErrorCode.TOKEN_INVALID,
+                code=ResponseCode.TOKEN_INVALID,
                 message="User not found",
             )
         return user

@@ -20,12 +20,11 @@ knowledge-base/
 │   │   │   ├── dependencies.py        #   FastAPI 依赖注入（get_db, get_current_user）
 │   │   │   ├── core/                  #   横切层
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── error_codes.py     #     错误码 StrEnum
+│   │   │   │   ├── response_codes.py   #     响应码 StrEnum
 │   │   │   │   ├── errors.py          #     异常层级
 │   │   │   │   ├── exceptions.py      #     全局异常处理器注册
-│   │   │   │   ├── middlewares.py     #     中间件注册
 │   │   │   │   ├── security.py        #     JWT + bcrypt
-│   │   │   │   └── trace.py           #     请求追踪 ID
+│   │   │   │   └── trace.py           #     请求追踪 ID + RequestIdMiddleware
 │   │   │   ├── models/                #   ORM 模型（一表一文件）
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── user.py
@@ -672,7 +671,7 @@ def get_logger(name: str):
 **在中间件里绑定 `request_id`**：
 
 ```python
-# core/middlewares.py — RequestIdMiddleware.dispatch()
+# core/trace.py — RequestIdMiddleware.dispatch()
 request.state.request_id = request_id
 structlog.contextvars.bind_contextvars(request_id=request_id)
 # ... 请求结束后 structlog.contextvars.unbind_contextvars("request_id")

@@ -5,7 +5,7 @@ from app.config import settings
 
 engine = create_engine(settings.database.url, echo=settings.debug)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=True, bind=engine)
 
 
 class Base(DeclarativeBase):

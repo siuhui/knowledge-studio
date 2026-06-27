@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.response_codes import ResponseCode
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
@@ -28,7 +29,7 @@ def create_source(
         config=payload.config,
     )
     return ApiResponse[SourceItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="Source created",
         data=SourceItem.model_validate(source),
     )
@@ -49,7 +50,7 @@ def list_sources(
         db, knowledge_base_id=knowledge_base_id, page=page, page_size=page_size
     )
     return PaginatedResponse[SourceItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="success",
         data=[SourceItem.model_validate(item) for item in items],
         meta=PaginationMeta(
@@ -71,4 +72,4 @@ def delete_source(
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[None]:
     SourceService.delete(db, source_id=source_id)
-    return ApiResponse[None](code="OK", message="Source deleted", data=None)
+    return ApiResponse[None](code=ResponseCode.OK, message="Source deleted", data=None)

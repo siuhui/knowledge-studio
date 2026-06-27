@@ -9,7 +9,7 @@ from app.api import auth, documents, health, knowledge_bases, retrieval, sources
 from app.config import settings
 from app.core.exceptions import AppError, app_error_handler, general_exception_handler
 from app.core.logging import setup_logging
-from app.core.middlewares import register_middlewares
+from app.core.trace import RequestIdMiddleware
 from app.database import Base, engine
 
 logger = structlog.get_logger(__name__)
@@ -42,7 +42,7 @@ app = FastAPI(
 )
 
 # Middleware
-register_middlewares(app)
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

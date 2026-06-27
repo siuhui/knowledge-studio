@@ -1,7 +1,7 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.error_codes import ErrorCode
+from app.core.response_codes import ResponseCode
 from app.core.errors import ForbiddenError, NotFoundError
 from app.models.knowledge_base import KnowledgeBase
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -38,12 +38,12 @@ class KnowledgeBaseService:
         )
         if not knowledge_base:
             raise NotFoundError(
-                code=ErrorCode.KNOWLEDGE_BASE_NOT_FOUND,
+                code=ResponseCode.KNOWLEDGE_BASE_NOT_FOUND,
                 message=f"KnowledgeBase {knowledge_base_id} not found",
             )
         if knowledge_base.user_id != user_id:
             raise ForbiddenError(
-                code=ErrorCode.KNOWLEDGE_BASE_ACCESS_DENIED,
+                code=ResponseCode.KNOWLEDGE_BASE_ACCESS_DENIED,
                 message="Access denied",
             )
         return knowledge_base

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.response_codes import ResponseCode
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
@@ -21,7 +22,7 @@ def list_knowledge_bases(
         db, user_id=current_user.id, page=page, page_size=page_size
     )
     return PaginatedResponse[KnowledgeBaseItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="success",
         data=[KnowledgeBaseItem.model_validate(item) for item in items],
         meta=PaginationMeta(
@@ -43,7 +44,7 @@ def create_knowledge_base(
         db, user_id=current_user.id, name=payload.name, description=payload.description
     )
     return ApiResponse[KnowledgeBaseItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="KnowledgeBase created",
         data=KnowledgeBaseItem.model_validate(knowledge_base),
     )
@@ -59,7 +60,7 @@ def get_knowledge_base(
         db, knowledge_base_id=knowledge_base_id, user_id=current_user.id
     )
     return ApiResponse[KnowledgeBaseItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="success",
         data=KnowledgeBaseItem.model_validate(knowledge_base),
     )
@@ -80,7 +81,7 @@ def update_knowledge_base(
         description=payload.description,
     )
     return ApiResponse[KnowledgeBaseItem](
-        code="OK",
+        code=ResponseCode.OK,
         message="KnowledgeBase updated",
         data=KnowledgeBaseItem.model_validate(knowledge_base),
     )
@@ -95,4 +96,4 @@ def delete_knowledge_base(
     KnowledgeBaseService.delete(
         db, knowledge_base_id=knowledge_base_id, user_id=current_user.id
     )
-    return ApiResponse[None](code="OK", message="KnowledgeBase deleted", data=None)
+    return ApiResponse[None](code=ResponseCode.OK, message="KnowledgeBase deleted", data=None)

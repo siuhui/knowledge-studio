@@ -3,7 +3,7 @@ import hashlib
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.error_codes import ErrorCode
+from app.core.response_codes import ResponseCode
 from app.core.errors import NotFoundError, ValidationError
 from app.models.document import Document
 from app.repositories.document_repository import DocumentRepository
@@ -26,7 +26,7 @@ class DocumentService:
     ) -> Document:
         if source_format not in SUPPORTED_FORMATS:
             raise ValidationError(
-                code=ErrorCode.UNSUPPORTED_FORMAT,
+                code=ResponseCode.DOCUMENT_UNSUPPORTED_FORMAT,
                 message=f"Format '{source_format}' is not supported. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}",
             )
 
@@ -60,7 +60,7 @@ class DocumentService:
         document = DocumentRepository.get_by_id(db, document_id=document_id)
         if not document:
             raise NotFoundError(
-                code=ErrorCode.DOCUMENT_NOT_FOUND,
+                code=ResponseCode.DOCUMENT_NOT_FOUND,
                 message=f"Document {document_id} not found",
             )
         return document

@@ -1,7 +1,7 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.error_codes import ErrorCode
+from app.core.response_codes import ResponseCode
 from app.core.errors import NotFoundError, ValidationError
 from app.models.source import Source
 from app.repositories.source_repository import SourceRepository
@@ -29,7 +29,7 @@ class SourceService:
 
         if type not in SUPPORTED_SOURCE_TYPES:
             raise ValidationError(
-                code=ErrorCode.SOURCE_TYPE_UNSUPPORTED,
+                code=ResponseCode.SOURCE_TYPE_UNSUPPORTED,
                 message=f"Source type '{type}' is not supported in v0.1",
             )
 
@@ -51,7 +51,7 @@ class SourceService:
         source = SourceRepository.get_by_id(db, source_id=source_id)
         if not source:
             raise NotFoundError(
-                code=ErrorCode.SOURCE_NOT_FOUND,
+                code=ResponseCode.SOURCE_NOT_FOUND,
                 message=f"Source {source_id} not found",
             )
         return source

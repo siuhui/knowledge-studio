@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.response_codes import ResponseCode
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -23,7 +24,7 @@ def search(
         knowledge_base_id=payload.knowledge_base_id,
         top_k=payload.top_k,
     )
-    return ApiResponse[RetrievalQueryResponse](code="OK", message="success", data=result)
+    return ApiResponse[RetrievalQueryResponse](code=ResponseCode.OK, message="success", data=result)
 
 
 @router.post("/api/v1/qa/ask", response_model=ApiResponse[QaResponse])
@@ -38,4 +39,4 @@ def ask(
         knowledge_base_id=payload.knowledge_base_id,
         top_k=payload.top_k,
     )
-    return ApiResponse[QaResponse](code="OK", message="success", data=result)
+    return ApiResponse[QaResponse](code=ResponseCode.OK, message="success", data=result)

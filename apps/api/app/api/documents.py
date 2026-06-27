@@ -2,6 +2,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.response_codes import ResponseCode
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
@@ -43,7 +44,7 @@ async def upload_document(
     )
 
     return ApiResponse[dict](
-        code="OK",
+        code=ResponseCode.OK,
         message="File uploaded and indexed successfully",
         data={"document_id": document_id},
     )
@@ -57,7 +58,7 @@ def get_document(
 ) -> ApiResponse[dict]:
     document = DocumentService.get_by_id(db, document_id=document_id)
     return ApiResponse[dict](
-        code="OK",
+        code=ResponseCode.OK,
         message="success",
         data={
             "id": document.id,
@@ -78,4 +79,4 @@ def delete_document(
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[None]:
     DocumentService.delete(db, document_id=document_id)
-    return ApiResponse[None](code="OK", message="Document deleted", data=None)
+    return ApiResponse[None](code=ResponseCode.OK, message="Document deleted", data=None)
