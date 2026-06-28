@@ -19,9 +19,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3rem)] px-4 text-center">
-      <h1 className="text-4xl font-semibold tracking-tight text-[#2F3437] mb-3">
-        KnowledgeBase
-      </h1>
+      <h1 className="text-4xl font-semibold tracking-tight text-[#2F3437] mb-3">KnowledgeBase</h1>
       <p className="text-base text-gray-400 max-w-md mb-10">
         Drop your documents in — search, ask, analyze with AI.
       </p>

@@ -9,6 +9,9 @@
       "recommended": true
     }
   },
+  "files": {
+    "ignore": [".next", "node_modules"]
+  },
   "formatter": {
     "indentStyle": "space",
     "indentWidth": 2,

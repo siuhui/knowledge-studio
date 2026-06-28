@@ -2,41 +2,31 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import {
+  api,
+  apiPaginated,
+  presignSourceUpload,
+  completeSourceUpload,
+  uploadToPresignedUrl,
+  getContentType,
+  listSourceDocuments,
+} from "@/lib/api";
 import { useToast } from "@/hooks/useToast";
-import { DocumentPanel, flattenDocs } from "@/components/knowledge-bases/DocumentPanel";
+import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
 import { StudioPanel } from "@/components/knowledge-bases/StudioPanel";
 import { AddSourceModal } from "@/components/knowledge-bases/AddSourceModal";
-import type { Citation, KnowledgeBase, QaResponse } from "@/lib/types";
-import type { SourceNode, FlatDocument } from "@/components/knowledge-bases/DocumentPanel";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { flattenDocs } from "@/lib/types";
+import type {
+  Citation,
+  Document,
+  FlatDocument,
+  KnowledgeBase,
+  QaResponse,
+  Source,
+  SourceNode,
+} from "@/lib/types";
 import type { StudioSourceDetail } from "@/components/knowledge-bases/StudioPanel";
-
-// ── Placeholder source data ──
-const PLACEHOLDER_SOURCES: SourceNode[] = [
-  {
-    id: "src-1",
-    name: "research_paper.pdf",
-    type: "upload",
-    documents: [
-      { id: "doc-1a", sourceId: "src-1", title: "research_paper_v2", version: "v2.0", description: "增强 OCR 文本" },
-      { id: "doc-1b", sourceId: "src-1", title: "research_paper_v1", version: "v1.0", description: "基础文本" },
-    ],
-  },
-  {
-    id: "src-2",
-    name: "tech_notes.md",
-    type: "upload",
-    documents: [
-      { id: "doc-2a", sourceId: "src-2", title: "tech_notes_parsed", version: "v1.0", description: "Markdown 解析" },
-    ],
-  },
-  {
-    id: "src-3",
-    name: "docs.example.com/kb",
-    type: "link",
-    documents: [],
-  },
-];
 
 // ── Message types ──
 interface ChatMessage {
@@ -63,9 +53,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 mb-1">
-          <span className="text-xs font-medium text-[#2F3437]">
-            {isUser ? "You" : "AI"}
-          </span>
+          <span className="text-xs font-medium text-[#2F3437]">{isUser ? "You" : "AI"}</span>
           <span className="text-[10px] text-gray-300">
             {new Date(message.createdAt).toLocaleTimeString("en-US", {
               hour: "2-digit",
@@ -105,9 +93,16 @@ function EmptyChat({ hasDocs }: { hasDocs: boolean }) {
       <div className="text-center">
         <div className="flex justify-center mb-3">
           <svg
-            width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"
-            className="text-gray-300" aria-hidden="true"
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-gray-300"
+            aria-hidden="true"
           >
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
@@ -137,9 +132,26 @@ export default function WorkspacePage() {
   // KB metadata
   const [kbName, setKbName] = useState("");
 
-  // Sources & documents
-  const [sources, setSources] = useState<SourceNode[]>([]);
-  const [documents, setDocuments] = useState<FlatDocument[]>([]);
+  // Sources (real API)
+  const [sources, setSources] = useState<Source[]>([]);
+  const [sourcesFirstLoad, setSourcesFirstLoad] = useState(true);
+  const [sourcesError, setSourcesError] = useState("");
+
+  // Documents (loaded per-source, keyed by source_id)
+  const [documentsBySource, setDocumentsBySource] = useState<Record<string, Document[]>>({});
+
+  // Upload
+  const [uploading, setUploading] = useState(false);
+  const [uploadStage, setUploadStage] = useState("");
+
+  // Delete
+  const [deleteSourceId, setDeleteSourceId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Re-extract
+  const [extractingSourceId, setExtractingSourceId] = useState<string | null>(null);
+
+  // Documents & selection
   const [checkedDocIds, setCheckedDocIds] = useState<Set<string>>(new Set());
 
   // Modals
@@ -155,43 +167,102 @@ export default function WorkspacePage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── Derived: SourceNode[] ──
+  const sourceNodes = useMemo<SourceNode[]>(() => {
+    return sources.map((s) => {
+      const config = s.config as Record<string, unknown> | null;
+      const name = (config?.original_name as string) ?? `Source ${s.id.slice(0, 8)}`;
+      const docs = documentsBySource[s.id] ?? [];
+      return {
+        id: s.id,
+        name,
+        type: (s.type as "upload") ?? "upload",
+        status: s.status,
+        documents: docs.map((d) => ({
+          id: d.id,
+          sourceId: s.id,
+          title: d.title,
+          version: "v1",
+          description: `${d.source_format} document`,
+        })),
+      };
+    });
+  }, [sources, documentsBySource]);
+
+  const documents = useMemo<FlatDocument[]>(() => {
+    return flattenDocs(sourceNodes);
+  }, [sourceNodes]);
+
   // ── Derived: active source for Studio detail view ──
   const activeSource = useMemo<StudioSourceDetail | null>(() => {
     if (!activeSourceId) return null;
     const src = sources.find((s) => s.id === activeSourceId);
     if (!src) return null;
+    const config = src.config as Record<string, unknown> | null;
+    const name = (config?.original_name as string) ?? `Source ${src.id.slice(0, 8)}`;
+    const docs = documentsBySource[src.id] ?? [];
     return {
       id: src.id,
-      name: src.name,
-      type: src.type,
-      createdAt: "2025-03-15T00:00:00Z", // placeholder — real data from API
-      documents: src.documents.map((d) => ({
-        ...d,
-        createdAt: "2025-06-01T00:00:00Z", // placeholder
+      name,
+      type: src.type as "upload" | "link",
+      status: src.status,
+      createdAt: src.created_at,
+      documents: docs.map((d) => ({
+        id: d.id,
+        title: d.title,
+        version: "v1",
+        description: `${d.source_format} document`,
+        createdAt: d.created_at,
       })),
     };
-  }, [activeSourceId, sources]);
+  }, [activeSourceId, sources, documentsBySource]);
 
-  // Load KB name
+  // ── Load KB name ──
   useEffect(() => {
     api<KnowledgeBase>(`/api/v1/knowledge-bases/${kbId}`)
       .then((r) => setKbName(r.data.name))
       .catch(() => {});
   }, [kbId]);
 
-  // Load sources & flatten into documents
-  useEffect(() => {
-    // TODO: Replace with real API:
-    // GET /api/v1/knowledge-bases/:id/sources → GET /api/v1/sources/:id/documents
-    const t = setTimeout(() => {
-      setSources(PLACEHOLDER_SOURCES);
-      setDocuments(flattenDocs(PLACEHOLDER_SOURCES));
-    }, 400);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ── Load sources + documents from API ──
+  const loadSources = useCallback(async () => {
+    setSourcesError("");
+    try {
+      const result = await apiPaginated<Source>(
+        `/api/v1/knowledge-bases/${kbId}/sources?page=1&page_size=50`,
+      );
+      setSources(result.data);
 
-  // Auto-scroll
+      // Load documents for all sources in parallel
+      if (result.data.length > 0) {
+        const docResults = await Promise.all(
+          result.data.map(async (s) => {
+            try {
+              const docs = await listSourceDocuments(s.id);
+              return { sourceId: s.id, docs };
+            } catch {
+              return { sourceId: s.id, docs: [] as Document[] };
+            }
+          }),
+        );
+        const bySource: Record<string, Document[]> = {};
+        for (const { sourceId, docs } of docResults) {
+          bySource[sourceId] = docs;
+        }
+        setDocumentsBySource(bySource);
+      }
+    } catch (err) {
+      setSourcesError(err instanceof Error ? err.message : "Failed to load sources");
+    } finally {
+      setSourcesFirstLoad(false);
+    }
+  }, [kbId]);
+
+  useEffect(() => {
+    loadSources();
+  }, [loadSources]);
+
+  // ── Auto-scroll chat ──
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers scroll
   useEffect(() => {
     if (scrollRef.current) {
@@ -210,38 +281,106 @@ export default function WorkspacePage() {
     });
   }, []);
 
+  // Upload flow: create source → presign → browser-to-MinIO → complete → reload
   const handleAddSourceFromModal = useCallback(
-    (_type: "upload" | "link", payload: File | string) => {
-      // TODO: POST /api/v1/knowledge-bases/:id/sources + upload file
+    async (file: File) => {
       setAddSourceOpen(false);
-      addToast("success", "Source added (placeholder — API not wired)");
+      setUploading(true);
+
+      try {
+        // Step 1: Create source (pending)
+        setUploadStage("Creating source...");
+        const created = await api<Source>(`/api/v1/knowledge-bases/${kbId}/sources`, {
+          method: "POST",
+          body: JSON.stringify({ type: "upload", config: null }),
+        });
+
+        // Show pending source in list immediately
+        await loadSources();
+
+        // Step 2: Get presigned URL
+        setUploadStage("Preparing upload...");
+        const contentType = getContentType(file.name);
+        const presignResult = await presignSourceUpload(created.data.id, file.name, contentType);
+
+        // Step 3: Upload directly to MinIO (bypasses backend)
+        setUploadStage("Uploading file...");
+        await uploadToPresignedUrl(presignResult.upload_url, presignResult.upload_fields, file);
+
+        // Step 4: Notify backend to validate and trigger indexing.
+        // /complete synchronously transitions source pending → active in the DB.
+        setUploadStage("Processing...");
+        await completeSourceUpload(created.data.id, {
+          bucket: presignResult.bucket,
+          object_key: presignResult.object_key,
+        });
+        addToast("success", `"${file.name}" uploaded. Indexing...`);
+        await loadSources();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Upload failed";
+        addToast("error", msg);
+        await loadSources();
+      } finally {
+        setUploading(false);
+        setUploadStage("");
+      }
     },
-    [addToast],
+    [kbId, addToast, loadSources],
   );
 
   const handleTraceSource = useCallback((sourceId: string) => {
-    setActiveSourceId((prev) => (prev === sourceId ? null : sourceId));
+    setActiveSourceId(sourceId);
   }, []);
 
-  const handleBackToCapabilities = useCallback(() => {
+  const handleBack = useCallback(() => {
     setActiveSourceId(null);
   }, []);
 
+  // Re-extract flow
   const handleReExtract = useCallback(
-    (sourceId: string) => {
-      // TODO: POST /api/v1/sources/:id/extract
-      addToast("success", "Re-extraction triggered (placeholder)");
+    async (sourceId: string) => {
+      setExtractingSourceId(sourceId);
+      try {
+        await api(`/api/v1/sources/${sourceId}/extract`, { method: "POST" });
+        addToast("success", "Re-extraction started");
+        await loadSources();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Re-extraction failed";
+        addToast("error", msg);
+      } finally {
+        setExtractingSourceId(null);
+      }
     },
-    [addToast],
+    [addToast, loadSources],
   );
 
-  const handleDeleteSource = useCallback(
-    (sourceId: string) => {
-      // TODO: DELETE /api/v1/knowledge-bases/:id/sources/:sourceId
-      addToast("success", "Source deleted (placeholder)");
-    },
-    [addToast],
-  );
+  // Delete: open confirm modal
+  const handleDeleteSource = useCallback((sourceId: string) => {
+    setDeleteSourceId(sourceId);
+  }, []);
+
+  // Delete: execute
+  const confirmDeleteSource = useCallback(async () => {
+    if (!deleteSourceId) return;
+    setDeleting(true);
+    try {
+      await api(`/api/v1/sources/${deleteSourceId}`, { method: "DELETE" });
+      addToast("success", "Source deleted");
+      setDeleteSourceId(null);
+      setActiveSourceId(null);
+      setSources((prev) => prev.filter((s) => s.id !== deleteSourceId));
+      setDocumentsBySource((prev) => {
+        const next = { ...prev };
+        delete next[deleteSourceId];
+        return next;
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      addToast("error", msg);
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteSourceId, addToast]);
 
   const handleSend = useCallback(async () => {
     const query = input.trim();
@@ -300,13 +439,41 @@ export default function WorkspacePage() {
 
   return (
     <div className="h-[calc(100vh-3rem)] flex overflow-hidden">
-      {/* ══ Left: Document panel ══ */}
-      <DocumentPanel
+      {/* ══ Upload progress overlay ══ */}
+      {uploading && (
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-40">
+          <div className="bg-[#1A1A1A] text-white text-xs px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="animate-spin shrink-0"
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <span>{uploadStage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Left: Tabbed sidebar (Documents / Sources) ══ */}
+      <LeftSidebar
         knowledgeBaseName={kbName}
         documents={documents}
+        sources={sources}
         checkedDocIds={checkedDocIds}
+        activeSourceId={activeSourceId}
+        sourcesFirstLoad={sourcesFirstLoad}
+        sourcesError={sourcesError}
         onToggleDocument={handleToggleDocument}
         onAddSource={() => setAddSourceOpen(true)}
+        onSelectSource={setActiveSourceId}
         onTraceSource={handleTraceSource}
       />
 
@@ -378,14 +545,32 @@ export default function WorkspacePage() {
                   aria-label="Send message"
                 >
                   {thinking ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                      className="animate-spin" aria-hidden="true">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="animate-spin"
+                      aria-hidden="true"
+                    >
                       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                     </svg>
                   ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
                       <line x1="22" y1="2" x2="11" y2="13" />
                       <polygon points="22 2 15 22 11 13 2 9 22 2" />
                     </svg>
@@ -402,10 +587,9 @@ export default function WorkspacePage() {
 
       {/* ══ Right: Studio panel ══ */}
       <StudioPanel
-        knowledgeBaseName={kbName}
-        activeDocCount={checkedDocIds.size}
         activeSource={activeSource}
-        onBackToCapabilities={handleBackToCapabilities}
+        extracting={extractingSourceId !== null}
+        onBack={handleBack}
         onReExtract={handleReExtract}
         onDeleteSource={handleDeleteSource}
       />
@@ -415,6 +599,17 @@ export default function WorkspacePage() {
         open={addSourceOpen}
         onClose={() => setAddSourceOpen(false)}
         onAddSource={handleAddSourceFromModal}
+      />
+
+      <ConfirmModal
+        open={deleteSourceId !== null}
+        title="Delete Source"
+        message="This will permanently delete the source and all its documents and files. This action cannot be undone."
+        confirmLabel="Delete"
+        danger
+        loading={deleting}
+        onConfirm={confirmDeleteSource}
+        onCancel={() => setDeleteSourceId(null)}
       />
     </div>
   );

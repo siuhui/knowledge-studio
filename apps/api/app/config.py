@@ -21,6 +21,7 @@ class ObjectStorageConfig(BaseSettings):
     region: str
     presign_expire_seconds: int
     max_upload_size_bytes: int
+    public_endpoint: str | None = None  # override for presigned URLs (e.g. localhost vs docker hostname)
 
 
 class LLMConfig(BaseSettings):

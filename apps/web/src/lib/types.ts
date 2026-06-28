@@ -27,6 +27,50 @@ export interface Document {
   updated_at: string;
 }
 
+// ── Derived / UI types ──
+
+/** A source with its documents resolved — used in tabbed sidebar */
+export interface SourceNode {
+  id: string;
+  name: string;
+  type: "upload" | "link";
+  status: string;
+  documents: SourceDocument[];
+}
+
+export interface SourceDocument {
+  id: string;
+  sourceId: string;
+  title: string;
+  version: string;
+  description: string;
+}
+
+/** Flattened document row for display */
+export interface FlatDocument {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  sourceType: "upload" | "link";
+  title: string;
+  version: string;
+  description: string;
+}
+
+export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
+  return sources.flatMap((s) =>
+    s.documents.map((d) => ({
+      id: d.id,
+      sourceId: s.id,
+      sourceName: s.name,
+      sourceType: s.type,
+      title: d.title,
+      version: d.version,
+      description: d.description,
+    })),
+  );
+}
+
 export interface Citation {
   document_id: string;
   document_title: string;

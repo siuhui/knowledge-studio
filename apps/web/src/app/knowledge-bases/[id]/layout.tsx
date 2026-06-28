@@ -28,13 +28,10 @@ export default function WorkspaceLayout({
     setLoading(true);
     setError("");
     try {
-      const result = await api<KnowledgeBase>(
-        `/api/v1/knowledge-bases/${id}`,
-      );
+      const result = await api<KnowledgeBase>(`/api/v1/knowledge-bases/${id}`);
       setKb(result.data);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Knowledge base not found";
+      const msg = err instanceof Error ? err.message : "Knowledge base not found";
       setError(msg);
       logger.error("Failed to load knowledge base", err);
     } finally {

@@ -7,14 +7,19 @@ import re
 from pathlib import Path
 from typing import Any
 
+import boto3
 import structlog
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from app.config import settings
+from app.core.errors import AppError, NotFoundError
+from app.core.response_codes import ResponseCode
 
 logger = structlog.get_logger(__name__)
 
 _client: Any | None = None
+_presign_client: Any | None = None
 
 
 def sanitize_filename(name: str) -> str:
@@ -28,11 +33,9 @@ def sanitize_filename(name: str) -> str:
 
 
 def _get_client() -> Any:
-    """Lazy-init the boto3 S3 client."""
+    """Lazy-init the boto3 S3 client (internal endpoint)."""
     global _client
     if _client is None:
-        import boto3
-
         cfg = settings.object_storage
         _client = boto3.client(
             "s3",
@@ -46,6 +49,28 @@ def _get_client() -> Any:
     return _client
 
 
+def _get_presign_client() -> Any:
+    """Lazy-init a separate boto3 S3 client for presigned URLs.
+
+    Uses public_endpoint when configured so generated URLs are reachable
+    from the browser (e.g. localhost:9000 vs Docker hostname minio:9000).
+    """
+    global _presign_client
+    if _presign_client is None:
+        cfg = settings.object_storage
+        endpoint = cfg.public_endpoint or cfg.endpoint
+        _presign_client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=cfg.access_key,
+            aws_secret_access_key=cfg.secret_key.get_secret_value(),
+            region_name=cfg.region,
+            config=BotoConfig(signature_version="s3v4"),
+        )
+        logger.info("presign client created", endpoint=endpoint)
+    return _presign_client
+
+
 class ObjectStorageService:
     """Static methods for MinIO/S3 operations. Lazy client init."""
 
@@ -55,13 +80,10 @@ class ObjectStorageService:
     ) -> tuple[str, dict[str, str]]:
         """Generate a presigned POST URL + fields for browser direct upload.
 
-        content_type is optional — when omitted, the browser may send any
-        Content-Type. The real format detection happens in the parser layer.
-        The content-length-range condition is always enforced.
-
-        Returns (upload_url, upload_fields).
+        Uses the public-endpoint client so generated URLs are reachable
+        from the user's browser, not from inside Docker.
         """
-        client = _get_client()
+        client = _get_presign_client()
         cfg = settings.object_storage
         max_size = max_size_bytes or cfg.max_upload_size_bytes
 
@@ -88,11 +110,6 @@ class ObjectStorageService:
         Raises NotFoundError(UPLOAD_OBJECT_NOT_FOUND) if the object doesn't exist.
         Raises AppError(STORAGE_UNAVAILABLE) on other storage errors.
         """
-        from botocore.exceptions import ClientError
-
-        from app.core.errors import AppError, NotFoundError
-        from app.core.response_codes import ResponseCode
-
         client = _get_client()
         try:
             return dict(client.head_object(Bucket=settings.object_storage.bucket, Key=key))
@@ -116,11 +133,6 @@ class ObjectStorageService:
         Raises NotFoundError(UPLOAD_OBJECT_NOT_FOUND) if the object doesn't exist.
         Raises AppError(STORAGE_UNAVAILABLE) on other storage errors.
         """
-        from botocore.exceptions import ClientError
-
-        from app.core.errors import AppError, NotFoundError
-        from app.core.response_codes import ResponseCode
-
         client = _get_client()
         try:
             response = client.get_object(Bucket=settings.object_storage.bucket, Key=key)

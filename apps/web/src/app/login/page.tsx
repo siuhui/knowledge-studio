@@ -33,9 +33,7 @@ export default function LoginPage() {
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3rem)] px-4">
       <div className="w-full max-w-sm">
         <h1 className="text-2xl font-semibold text-[#2F3437] mb-2">Sign in</h1>
-        <p className="text-sm text-gray-400 mb-8">
-          Welcome back to KnowledgeBase
-        </p>
+        <p className="text-sm text-gray-400 mb-8">Welcome back to KnowledgeBase</p>
 
         {error && (
           <div className="mb-6 rounded-lg border border-red-200 bg-red-50/50 p-3 text-sm text-red-600">

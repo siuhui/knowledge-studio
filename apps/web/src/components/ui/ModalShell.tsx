@@ -40,7 +40,9 @@ export function ModalShell({ open, onClose, children }: ModalShellProps) {
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      onKeyDown={() => { /* click-to-dismiss handled by Esc listener above */ }}
+      onKeyDown={() => {
+        /* click-to-dismiss handled by Esc listener above */
+      }}
     >
       {children}
     </div>

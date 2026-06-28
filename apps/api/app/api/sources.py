@@ -165,7 +165,7 @@ def extract_source(
         ObjectStorageService.head_object(key=s3_key)
     except NotFoundError:
         source.status = "error"
-        db.flush()
+        db.commit()
         logger.warning(
             "source object not found, marked as error",
             source_id=source_id,

@@ -122,9 +122,7 @@ export function KbCard({ kb, onEdit, onDelete }: KbCardProps) {
 
       {/* Description */}
       {kb.description ? (
-        <p className="text-xs text-gray-400 line-clamp-2 mb-3 leading-relaxed">
-          {kb.description}
-        </p>
+        <p className="text-xs text-gray-400 line-clamp-2 mb-3 leading-relaxed">{kb.description}</p>
       ) : (
         <p className="text-xs text-gray-300 italic mb-3">No description</p>
       )}

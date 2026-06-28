@@ -8,11 +8,9 @@ interface ToastProps {
 }
 
 export function Toast({ id, type, message, onDismiss }: ToastProps) {
-  const borderClass =
-    type === "success" ? "border-gray-200" : "border-red-200";
+  const borderClass = type === "success" ? "border-gray-200" : "border-red-200";
 
-  const dotClass =
-    type === "success" ? "bg-emerald-500" : "bg-red-500";
+  const dotClass = type === "success" ? "bg-emerald-500" : "bg-red-500";
 
   return (
     <div
@@ -29,7 +27,12 @@ export function Toast({ id, type, message, onDismiss }: ToastProps) {
         aria-label="Dismiss"
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path
+            d="M3 3l8 8M11 3l-8 8"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
       </button>
     </div>

@@ -66,7 +66,7 @@ class SourceService:
             )
         source.config = config
         source.status = "active"
-        source = SourceRepository.save(db, source=source)
+        SourceRepository.save(db, source=source)
         logger.info("source activated", source_id=source_id)
         return source
 
@@ -75,18 +75,12 @@ class SourceService:
         """Mark a source as error. Creates its own DB session — safe for background tasks."""
         from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
-            source = db.get(Source, source_id)
-            if source and source.status != "error":
-                source.status = "error"
-                db.commit()
-                logger.info("source marked as error", source_id=source_id)
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        with SessionLocal() as db:
+            with db.begin():
+                source = db.get(Source, source_id)
+                if source and source.status != "error":
+                    source.status = "error"
+                    logger.info("source marked as error", source_id=source_id)
 
     @staticmethod
     def get_by_id(db: Session, *, source_id: str, user_id: str) -> Source:
@@ -133,8 +127,8 @@ class SourceService:
 
         prefix = f"uploads/{source.knowledge_base_id}/{source_id}/"
 
-        # Delete DB record first: if this fails, the transaction rolls back
-        # and MinIO is untouched — both stay consistent.
+        # Delete from DB. If this fails, MinIO is untouched and both stay consistent.
+        # The actual commit happens when the request returns (get_db dependency).
         SourceRepository.delete(db, source=source)
         logger.info("source deleted", source_id=source_id)
 

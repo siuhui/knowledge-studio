@@ -35,7 +35,9 @@ export function ConfirmModal({
       <div
         className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-gray-200/60 p-6 w-full max-w-sm"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={() => { /* prevent event bubbling */ }}
+        onKeyDown={() => {
+          /* prevent event bubbling */
+        }}
       >
         <h2 className="text-base font-semibold text-[#2F3437] mb-2">{title}</h2>
         <p className="text-sm text-gray-500 leading-relaxed mb-6">{message}</p>

@@ -54,8 +54,7 @@ export default function KnowledgeBasesPage() {
         return;
       }
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to load knowledge bases";
+      const msg = err instanceof Error ? err.message : "Failed to load knowledge bases";
       setError(msg);
       logger.error("Failed to load knowledge bases", err);
     } finally {
@@ -116,9 +115,7 @@ export default function KnowledgeBasesPage() {
     <div className="max-w-6xl mx-auto px-6 sm:px-8 py-10">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-[#2F3437] tracking-tight">
-          Knowledge Bases
-        </h1>
+        <h1 className="text-2xl font-semibold text-[#2F3437] tracking-tight">Knowledge Bases</h1>
         {meta && (
           <p className="text-sm text-gray-400 mt-1">
             {meta.total} knowledge base{meta.total === 1 ? "" : "s"}
@@ -167,9 +164,7 @@ export default function KnowledgeBasesPage() {
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </div>
-          <h3 className="text-sm font-medium text-gray-400">
-            Create Knowledge Base
-          </h3>
+          <h3 className="text-sm font-medium text-gray-400">Create Knowledge Base</h3>
         </div>
 
         {/* Skeleton loading cards */}
@@ -189,12 +184,7 @@ export default function KnowledgeBasesPage() {
 
         {/* Knowledge base cards */}
         {knowledgeBases.map((kb) => (
-          <KbCard
-            key={kb.id}
-            kb={kb}
-            onEdit={handleEditClick}
-            onDelete={handleDeleteClick}
-          />
+          <KbCard key={kb.id} kb={kb} onEdit={handleEditClick} onDelete={handleDeleteClick} />
         ))}
       </div>
 
@@ -221,9 +211,7 @@ export default function KnowledgeBasesPage() {
               <line x1="16" y1="17" x2="8" y2="17" />
             </svg>
           </div>
-          <h3 className="text-sm font-medium text-gray-400 mb-1">
-            No knowledge bases yet
-          </h3>
+          <h3 className="text-sm font-medium text-gray-400 mb-1">No knowledge bases yet</h3>
           <p className="text-xs text-gray-300">
             Click &ldquo;Create Knowledge Base&rdquo; to get started.
           </p>
@@ -232,11 +220,7 @@ export default function KnowledgeBasesPage() {
 
       {/* Pagination */}
       {meta && meta.total_pages > 1 && (
-        <Pagination
-          meta={meta}
-          onPageChange={handlePageChange}
-          loading={loading}
-        />
+        <Pagination meta={meta} onPageChange={handlePageChange} loading={loading} />
       )}
 
       {/* ── Modals ── */}

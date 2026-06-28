@@ -190,6 +190,9 @@ def complete_upload(
     }
     SourceService.update_config_and_activate(db, source_id=source_id, config=config)
 
+    # must see the updated source status (pending → active).
+    db.commit()
+
     # Schedule background indexing (creates its own DB session)
     background_tasks.add_task(
         run_index_pipeline,

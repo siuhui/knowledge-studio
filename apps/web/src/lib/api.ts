@@ -1,4 +1,11 @@
-import { ApiError, type PaginatedMeta } from "./types";
+import {
+  ApiError,
+  type Document,
+  type PaginatedMeta,
+  type PresignResponse,
+  type UploadCompleteRequest,
+  type UploadCompleteResponse,
+} from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -81,4 +88,71 @@ export async function uploadFile(
     throw new ApiError(err.code, err.message, res.status, rid);
   }
   return { data: (await res.json()).data as unknown, requestId: rid };
+}
+
+// ── Presigned upload helpers ──
+
+export function getContentType(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    pdf: "application/pdf",
+    md: "text/markdown",
+    markdown: "text/markdown",
+    txt: "text/plain",
+    text: "text/plain",
+  };
+  return map[ext ?? ""] ?? "application/octet-stream";
+}
+
+export async function presignSourceUpload(
+  sourceId: string,
+  filename: string,
+  contentType: string,
+): Promise<PresignResponse> {
+  const result = await api<PresignResponse>(`/api/v1/sources/${sourceId}/uploads/presign`, {
+    method: "POST",
+    body: JSON.stringify({ filename, content_type: contentType }),
+  });
+  return result.data;
+}
+
+export async function completeSourceUpload(
+  sourceId: string,
+  body: UploadCompleteRequest,
+): Promise<UploadCompleteResponse> {
+  const result = await api<UploadCompleteResponse>(`/api/v1/sources/${sourceId}/uploads/complete`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return result.data;
+}
+
+export async function listSourceDocuments(sourceId: string): Promise<Document[]> {
+  const result = await apiPaginated<Document>(
+    `/api/v1/sources/${sourceId}/documents?page=1&page_size=50`,
+  );
+  return result.data;
+}
+
+export async function uploadToPresignedUrl(
+  uploadUrl: string,
+  uploadFields: Record<string, string>,
+  file: File,
+): Promise<void> {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(uploadFields)) {
+    formData.append(key, value);
+  }
+  // File must be last for S3/MinIO presigned POST compatibility
+  formData.append("file", file);
+
+  const res = await fetch(uploadUrl, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "Unknown error");
+    throw new ApiError("UPLOAD_FAILED", `Upload failed (${res.status}): ${text}`, res.status, "");
+  }
 }

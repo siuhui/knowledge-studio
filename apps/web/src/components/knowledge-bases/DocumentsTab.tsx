@@ -1,54 +1,7 @@
 "use client";
 
-// ── Types ──
-
-export interface FlatDocument {
-  id: string;
-  sourceId: string;
-  sourceName: string;
-  sourceType: "upload" | "link";
-  title: string;
-  version: string;
-  description: string;
-}
-
-export interface SourceNode {
-  id: string;
-  name: string;
-  type: "upload" | "link";
-  documents: {
-    id: string;
-    sourceId: string;
-    title: string;
-    version: string;
-    description: string;
-  }[];
-}
-
-/** Flatten SourceNode[] → FlatDocument[] for display */
-export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
-  return sources.flatMap((s) =>
-    s.documents.map((d) => ({
-      id: d.id,
-      sourceId: s.id,
-      sourceName: s.name,
-      sourceType: s.type,
-      title: d.title,
-      version: d.version,
-      description: d.description,
-    })),
-  );
-}
-
-interface DocumentPanelProps {
-  knowledgeBaseName: string;
-  documents: FlatDocument[];
-  checkedDocIds: Set<string>;
-  onToggleDocument: (docId: string) => void;
-  onAddSource: () => void;
-  /** Called when user clicks the source trace on a document */
-  onTraceSource?: (sourceId: string) => void;
-}
+import { useState } from "react";
+import type { FlatDocument } from "@/lib/types";
 
 // ── Icons ──
 
@@ -114,6 +67,26 @@ function LinkIcon() {
   );
 }
 
+function SearchIcon() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0"
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
 // ── Checkbox ──
 
 function Checkbox({
@@ -131,9 +104,7 @@ function Checkbox({
         onChange();
       }}
       className={`shrink-0 w-4 h-4 rounded border transition-all duration-200 flex items-center justify-center ${
-        checked
-          ? "bg-[#1A1A1A] border-[#1A1A1A]"
-          : "border-gray-300 bg-white hover:border-gray-400"
+        checked ? "bg-[#1A1A1A] border-[#1A1A1A]" : "border-gray-300 bg-white hover:border-gray-400"
       }`}
       aria-label={checked ? "Deselect document" : "Select document"}
     >
@@ -158,69 +129,67 @@ function Checkbox({
 
 // ── Component ──
 
-export function DocumentPanel({
-  knowledgeBaseName,
+interface DocumentsTabProps {
+  documents: FlatDocument[];
+  checkedDocIds: Set<string>;
+  onToggleDocument: (docId: string) => void;
+  /** Called when user clicks the source trace link — switches to Sources tab + selects source */
+  onTraceSource?: (sourceId: string) => void;
+}
+
+export function DocumentsTab({
   documents,
   checkedDocIds,
   onToggleDocument,
-  onAddSource,
   onTraceSource,
-}: DocumentPanelProps) {
-  const checkedCount = checkedDocIds.size;
+}: DocumentsTabProps) {
+  const [search, setSearch] = useState("");
+
+  const filtered = search.trim()
+    ? documents.filter((d) => d.title.toLowerCase().includes(search.toLowerCase()))
+    : documents;
 
   return (
-    <aside className="w-[22%] min-w-[260px] max-w-[320px] shrink-0 h-full bg-[#F7F7F5] flex flex-col border-r border-gray-200/60">
-      {/* ── Header ── */}
-      <div className="px-4 py-4 border-b border-gray-200/40">
-        <h2 className="text-sm font-semibold text-[#1A1A1A] truncate">
-          {knowledgeBaseName}
-        </h2>
-        <p className="text-[11px] text-gray-400 mt-0.5">
-          {documents.length} document{documents.length === 1 ? "" : "s"}
-          {checkedCount > 0 && ` · ${checkedCount} active`}
-        </p>
-      </div>
+    <>
+      {/* Search */}
+      {documents.length > 0 && (
+        <div className="px-3 pb-2">
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300">
+              <SearchIcon />
+            </span>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search documents..."
+              className="w-full rounded-lg border border-gray-200/60 bg-white/70 pl-7 pr-2.5 py-1.5
+                text-[11px] text-[#2F3437] placeholder:text-gray-300
+                outline-none focus:border-gray-300 focus:bg-white
+                transition-all duration-200"
+            />
+          </div>
+        </div>
+      )}
 
-      {/* ── + Add Source ── */}
-      <div className="px-3 py-3">
-        <button
-          type="button"
-          onClick={onAddSource}
-          className="w-full flex items-center justify-center gap-2 rounded-lg
-            bg-white border border-gray-200/60 px-3 py-2 text-xs font-medium
-            text-[#2F3437] hover:border-gray-300 hover:bg-gray-50/50
-            transition-all duration-200"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Add Source
-        </button>
-      </div>
-
-      {/* ── Flat document list ── */}
+      {/* Document list */}
       <div className="flex-1 overflow-y-auto px-3 pb-4">
-        {documents.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="text-center py-10">
-            <p className="text-xs text-gray-300">No documents yet</p>
-            <p className="text-[11px] text-gray-200 mt-0.5">
-              Add a source to extract documents
-            </p>
+            {documents.length === 0 ? (
+              <>
+                <p className="text-xs text-gray-300">No documents yet</p>
+                <p className="text-[11px] text-gray-200 mt-0.5">
+                  Add a source to extract documents
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-gray-300">No documents match &ldquo;{search}&rdquo;</p>
+            )}
           </div>
         ) : (
           <div className="space-y-1">
-            {documents.map((doc) => {
+            {filtered.map((doc) => {
               const isChecked = checkedDocIds.has(doc.id);
 
               return (
@@ -234,10 +203,7 @@ export function DocumentPanel({
                 >
                   {/* Main row: checkbox + title */}
                   <div className="flex items-center gap-2.5">
-                    <Checkbox
-                      checked={isChecked}
-                      onChange={() => onToggleDocument(doc.id)}
-                    />
+                    <Checkbox checked={isChecked} onChange={() => onToggleDocument(doc.id)} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <DocIcon />
@@ -246,9 +212,7 @@ export function DocumentPanel({
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5 ml-[22px]">
-                        <span className="text-[10px] font-medium text-gray-400">
-                          {doc.version}
-                        </span>
+                        <span className="text-[10px] font-medium text-gray-400">{doc.version}</span>
                         <span className="text-[10px] text-gray-300 truncate">
                           · {doc.description}
                         </span>
@@ -263,14 +227,8 @@ export function DocumentPanel({
                     className="flex items-center gap-1 mt-2 ml-[26px] text-[10px] text-gray-300
                       hover:text-gray-500 transition-colors duration-200 group/trace"
                   >
-                    {doc.sourceType === "upload" ? (
-                      <FileIcon />
-                    ) : (
-                      <LinkIcon />
-                    )}
-                    <span className="truncate max-w-[180px]">
-                      from {doc.sourceName}
-                    </span>
+                    {doc.sourceType === "upload" ? <FileIcon /> : <LinkIcon />}
+                    <span className="truncate max-w-[180px]">from {doc.sourceName}</span>
                     <svg
                       width="10"
                       height="10"
@@ -292,16 +250,6 @@ export function DocumentPanel({
           </div>
         )}
       </div>
-
-      {/* ── Footer ── */}
-      {checkedCount > 0 && (
-        <div className="px-4 py-2.5 border-t border-gray-200/40 bg-white/50">
-          <p className="text-[10px] text-gray-500">
-            <span className="font-medium">{checkedCount}</span> document
-            {checkedCount === 1 ? "" : "s"} in AI context
-          </p>
-        </div>
-      )}
-    </aside>
+    </>
   );
 }

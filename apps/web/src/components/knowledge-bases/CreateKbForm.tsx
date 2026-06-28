@@ -52,11 +52,7 @@ export function CreateKbForm({ onCreated }: CreateKbFormProps) {
         <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
           Create Knowledge Base
         </h2>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={submitting || !name.trim()}
-        >
+        <Button type="submit" variant="primary" disabled={submitting || !name.trim()}>
           {submitting ? "Creating…" : "Create"}
         </Button>
       </div>
