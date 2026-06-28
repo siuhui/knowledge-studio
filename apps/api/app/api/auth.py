@@ -5,7 +5,7 @@ from app.core.response_codes import ResponseCode
 from app.dependencies import get_db
 from app.schemas.auth import AuthTokenResponse, LoginRequest, RegisterRequest, UserResponse
 from app.schemas.common import ApiResponse
-from app.services.auth_service import AuthService
+from app.services.auth import AuthService
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 

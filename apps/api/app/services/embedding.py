@@ -4,9 +4,12 @@ v0.1.0 ships with an OpenAI-compatible embedder. Swap implementations by
 changing the `embedder` module-level instance at startup.
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 
 class Embedder(Protocol):
@@ -20,7 +23,7 @@ class OpenAIEmbedder:
     def __init__(self) -> None:
         self._dimension = settings.llm.embedding_dimension
         self._model = settings.llm.embedding_model
-        self._client = None  # Lazy init
+        self._client: OpenAI | None = None  # Lazy init
 
     @property
     def dimension(self) -> int:

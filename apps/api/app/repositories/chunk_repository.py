@@ -9,15 +9,8 @@ class ChunkRepository:
         return db.get(Chunk, chunk_id)
 
     @staticmethod
-    def list_by_document(
-        db: Session, *, document_id: str
-    ) -> list[Chunk]:
-        return (
-            db.query(Chunk)
-            .filter(Chunk.doc_id == document_id)
-            .order_by(Chunk.chunk_index)
-            .all()
-        )
+    def list_by_document(db: Session, *, document_id: str) -> list[Chunk]:
+        return db.query(Chunk).filter(Chunk.doc_id == document_id).order_by(Chunk.chunk_index).all()
 
     @staticmethod
     def save_batch(db: Session, *, chunks: list[Chunk]) -> list[Chunk]:

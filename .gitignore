@@ -27,6 +27,10 @@ Thumbs.db
 htmlcov/
 .coverage.*
 
+# Linting & type checking
+.mypy_cache/
+.ruff_cache/
+
 # Next.js
 apps/web/.next/
 apps/web/out/

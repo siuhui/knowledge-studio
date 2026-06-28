@@ -1,8 +1,8 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.response_codes import ResponseCode
 from app.core.errors import ConflictError, UnauthorizedError
+from app.core.response_codes import ResponseCode
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -46,7 +46,7 @@ class AuthService:
         try:
             payload = decode_access_token(token)
             user_id = payload.get("sub")
-            if not user_id:
+            if not user_id or not isinstance(user_id, str):
                 raise UnauthorizedError(
                     code=ResponseCode.TOKEN_INVALID,
                     message="Invalid token: missing subject",

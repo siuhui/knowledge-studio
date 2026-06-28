@@ -1,6 +1,6 @@
 """Hybrid retrieval: pgvector semantic search + PostgreSQL full-text search, fused with RRF."""
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
@@ -34,18 +34,18 @@ def _keyword_search(
 ) -> list[tuple[Chunk, Document, float]]:
     """PostgreSQL full-text search with ts_rank."""
     rows = (
-        db.query(Chunk, Document, func.ts_rank(
-            func.to_tsvector("english", Chunk.content),
-            func.plainto_tsquery("english", query),
-        ).label("rank"))
+        db.query(
+            Chunk,
+            Document,
+            func.ts_rank(
+                func.to_tsvector("english", Chunk.content),
+                func.plainto_tsquery("english", query),
+            ).label("rank"),
+        )
         .join(Document, Chunk.doc_id == Document.id)
         .join(Document.source)
         .filter(Document.source.has(knowledge_base_id=knowledge_base_id))
-        .filter(
-            func.to_tsvector("english", Chunk.content).match(
-                query, postgresql_regconfig="english"
-            )
-        )
+        .filter(func.to_tsvector("english", Chunk.content).match(query, postgresql_regconfig="english"))
         .order_by(text("rank DESC"))
         .limit(top_k * 2)
         .all()

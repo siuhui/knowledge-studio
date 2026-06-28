@@ -4,13 +4,12 @@ The pipeline is deliberately minimal — no RAG framework, just direct control
 over each step as specified in engineering-standards.md §10.
 """
 
-import re
 import hashlib
+import re
 
 import structlog
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models.chunk import Chunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
@@ -35,7 +34,6 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
     paragraphs = re.split(r"\n\s*\n", text)
     chunks: list[str] = []
 
-    char_size = chunk_size * 4  # approximate character count
     char_overlap = overlap * 4
 
     for para in paragraphs:
@@ -156,3 +154,35 @@ def index_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
     _reindex_document(db, document_id=document.id)
 
     return document.id
+
+
+def run_index_pipeline(source_id: str, s3_key: str, filename: str) -> None:
+    """Background task: download from MinIO → parse → chunk.
+
+    Creates its own DB session since the request session is already
+    closed when BackgroundTasks fire. If the pipeline fails, marks
+    the source as error.
+    """
+    from app.database import SessionLocal
+    from app.services.object_storage import ObjectStorageService
+    from app.services.source import SourceService
+
+    db = SessionLocal()
+    try:
+        raw_bytes = ObjectStorageService.get(key=s3_key)
+        index_document(db, raw_bytes=raw_bytes, filename=filename, source_id=source_id)
+        db.commit()
+        logger.info("index pipeline completed", source_id=source_id)
+    except Exception:
+        db.rollback()
+        logger.exception("index pipeline failed", source_id=source_id)
+        # Mark source as error (creates its own session, safe in bg task)
+        try:
+            SourceService.mark_error(source_id=source_id)
+        except Exception:
+            logger.exception(
+                "failed to mark source as error after pipeline failure",
+                source_id=source_id,
+            )
+    finally:
+        db.close()

@@ -13,9 +13,7 @@ class DocumentRepository:
         return db.query(Document).filter(Document.content_hash == content_hash).first()
 
     @staticmethod
-    def list_by_source(
-        db: Session, *, source_id: str, offset: int = 0, limit: int = 20
-    ) -> tuple[list[Document], int]:
+    def list_by_source(db: Session, *, source_id: str, offset: int = 0, limit: int = 20) -> tuple[list[Document], int]:
         query = db.query(Document).filter(Document.source_id == source_id)
         total = query.count()
         items = query.order_by(Document.created_at.desc()).offset(offset).limit(limit).all()

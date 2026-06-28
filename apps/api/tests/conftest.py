@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.main import app
@@ -56,7 +56,6 @@ def client(db):
 @pytest.fixture
 def auth_headers(client, db):
     """Create a test user and return auth headers for authenticated requests."""
-    from app.schemas.auth import RegisterRequest
 
     # Register
     client.post("/api/v1/auth/register", json={"username": "testuser", "password": "testpass123"})

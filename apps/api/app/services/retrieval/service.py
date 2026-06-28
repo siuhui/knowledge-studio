@@ -3,11 +3,10 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.schemas.retrieval.response import QaResponse, RetrievalChunk, RetrievalQueryResponse
 from app.services.retrieval.citation_builder import build_citations
 from app.services.retrieval.reranker import rerank
 from app.services.retrieval.retriever import hybrid_search
-from app.schemas.retrieval.response import QaResponse, RetrievalChunk, RetrievalQueryResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -69,9 +68,7 @@ class RetrievalService:
     ) -> QaResponse:
         """RAG QA: retrieve → build context → answer with citations."""
         # Retrieve
-        retrieval = RetrievalService.search(
-            db, query=query, knowledge_base_id=knowledge_base_id, top_k=top_k
-        )
+        retrieval = RetrievalService.search(db, query=query, knowledge_base_id=knowledge_base_id, top_k=top_k)
 
         if not retrieval.results:
             return QaResponse(
@@ -83,9 +80,7 @@ class RetrievalService:
         # Build context from retrieved chunks
         context_parts = []
         for result in retrieval.results:
-            context_parts.append(
-                f"[Source: {result.document_title}]\n{result.content}"
-            )
+            context_parts.append(f"[Source: {result.document_title}]\n{result.content}")
         context = "\n\n".join(context_parts)
 
         # Call LLM for answer

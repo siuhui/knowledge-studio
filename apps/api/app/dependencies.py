@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.models.user import User
 
 logger = structlog.get_logger(__name__)
 
@@ -27,12 +28,12 @@ def get_db() -> Generator[Session, None, None]:
 def get_current_user(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme),
-):
+) -> User:
     """
     Dependency that extracts and validates the current user from the JWT token.
     Binds user_id to structlog context for the request lifecycle.
     """
-    from app.services.auth_service import AuthService
+    from app.services.auth import AuthService
 
     user = AuthService.get_user_from_token(db, token)
     structlog.contextvars.bind_contextvars(user_id=user.id)

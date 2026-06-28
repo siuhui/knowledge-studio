@@ -1,3 +1,5 @@
+from typing import Any
+
 import structlog
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
@@ -6,24 +8,24 @@ from app.core.response_codes import ResponseCode
 from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.services.document_service import DocumentService
-from app.services.indexing_service import index_document
-from app.services.source_service import SourceService
+from app.services.document import DocumentService
+from app.services.index_pipeline import index_document
+from app.services.source import SourceService
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=ApiResponse[dict])
+@router.post("/upload", response_model=ApiResponse[dict[str, Any]])
 async def upload_document(
     file: UploadFile = File(...),
     source_id: str = Form(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ApiResponse[dict]:
+) -> ApiResponse[dict[str, Any]]:
     # Verify source exists
-    source = SourceService.get_by_id(db, source_id=source_id)
+    source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
 
     # Read file bytes
     raw_bytes = await file.read()
@@ -43,21 +45,21 @@ async def upload_document(
         source_id=source_id,
     )
 
-    return ApiResponse[dict](
+    return ApiResponse[dict[str, Any]](
         code=ResponseCode.OK,
         message="File uploaded and indexed successfully",
         data={"document_id": document_id},
     )
 
 
-@router.get("/{document_id}", response_model=ApiResponse[dict])
+@router.get("/{document_id}", response_model=ApiResponse[dict[str, Any]])
 def get_document(
     document_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ApiResponse[dict]:
+) -> ApiResponse[dict[str, Any]]:
     document = DocumentService.get_by_id(db, document_id=document_id)
-    return ApiResponse[dict](
+    return ApiResponse[dict[str, Any]](
         code=ResponseCode.OK,
         message="success",
         data={

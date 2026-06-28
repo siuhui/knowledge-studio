@@ -5,8 +5,8 @@ Parser Protocol + format registry. v0.1.0 supports PDF, Markdown, plain text.
 
 from typing import Protocol
 
-import fitz  # PyMuPDF
 import charset_normalizer
+import fitz  # PyMuPDF
 
 
 class Parser(Protocol):
@@ -38,6 +38,7 @@ class MarkdownParser:
 
         # Remove image syntax: ![alt](url) and ![alt](url "title")
         import re
+
         text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
 
         # Remove inline links but keep text: [text](url) → text
@@ -74,7 +75,7 @@ def _strip_frontmatter(text: str) -> str:
     if text.startswith("---"):
         end = text.find("---", 3)
         if end != -1:
-            return text[end + 3:].lstrip()
+            return text[end + 3 :].lstrip()
     return text
 
 

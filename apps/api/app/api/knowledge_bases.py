@@ -6,7 +6,7 @@ from app.dependencies import get_current_user, get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
 from app.schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseItem, KnowledgeBaseUpdate
-from app.services.knowledge_base_service import KnowledgeBaseService
+from app.services.knowledge_base import KnowledgeBaseService
 
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
 
@@ -18,9 +18,7 @@ def list_knowledge_bases(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PaginatedResponse[KnowledgeBaseItem]:
-    items, total = KnowledgeBaseService.list_by_user(
-        db, user_id=current_user.id, page=page, page_size=page_size
-    )
+    items, total = KnowledgeBaseService.list_by_user(db, user_id=current_user.id, page=page, page_size=page_size)
     return PaginatedResponse[KnowledgeBaseItem](
         code=ResponseCode.OK,
         message="success",
@@ -56,9 +54,7 @@ def get_knowledge_base(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[KnowledgeBaseItem]:
-    knowledge_base = KnowledgeBaseService.get_by_id(
-        db, knowledge_base_id=knowledge_base_id, user_id=current_user.id
-    )
+    knowledge_base = KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=current_user.id)
     return ApiResponse[KnowledgeBaseItem](
         code=ResponseCode.OK,
         message="success",
@@ -93,7 +89,5 @@ def delete_knowledge_base(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[None]:
-    KnowledgeBaseService.delete(
-        db, knowledge_base_id=knowledge_base_id, user_id=current_user.id
-    )
+    KnowledgeBaseService.delete(db, knowledge_base_id=knowledge_base_id, user_id=current_user.id)
     return ApiResponse[None](code=ResponseCode.OK, message="KnowledgeBase deleted", data=None)

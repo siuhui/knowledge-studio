@@ -3,11 +3,15 @@
 v0.1.0 supports OpenAI and Anthropic chat APIs.
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from anthropic import Anthropic
+    from openai import OpenAI
 
 logger = structlog.get_logger(__name__)
 
@@ -19,7 +23,7 @@ class LLMProvider(Protocol):
 class OpenAIProvider:
     def __init__(self) -> None:
         self._model = settings.llm.chat_model
-        self._client = None  # Lazy init
+        self._client: OpenAI | None = None  # Lazy init
 
     def answer(self, *, query: str, context: str) -> str:
         if self._client is None:
@@ -50,7 +54,7 @@ class OpenAIProvider:
 class AnthropicProvider:
     def __init__(self) -> None:
         self._model = settings.llm.chat_model
-        self._client = None  # Lazy init
+        self._client: Anthropic | None = None  # Lazy init
 
     def answer(self, *, query: str, context: str) -> str:
         if self._client is None:
@@ -74,7 +78,7 @@ class AnthropicProvider:
                 {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
             ],
         )
-        return response.content[0].text
+        return str(response.content[0].text)  # type: ignore[union-attr]
 
 
 def _create_llm_provider() -> LLMProvider:

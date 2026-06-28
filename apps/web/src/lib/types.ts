@@ -73,6 +73,35 @@ export interface PaginatedMeta {
   total_pages: number;
 }
 
+export interface PresignRequest {
+  filename: string;
+  content_type: string;
+}
+
+export interface PresignResponse {
+  provider: string;
+  bucket: string;
+  object_key: string;
+  upload_url: string;
+  upload_fields: Record<string, string>;
+  expires_in: number;
+  max_size_bytes: number;
+}
+
+export interface UploadCompleteRequest {
+  bucket: string;
+  object_key: string;
+  etag?: string | null;
+}
+
+export interface UploadCompleteResponse {
+  accepted: boolean;
+  object_key: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+}
+
 export class ApiError extends Error {
   code: string;
   status: number;

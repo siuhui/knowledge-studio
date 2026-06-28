@@ -2,8 +2,8 @@ import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from app.core.response_codes import ResponseCode
 from app.core.errors import AppError
+from app.core.response_codes import ResponseCode
 from app.schemas.common import ApiResponse
 
 logger = structlog.get_logger(__name__)

@@ -1,8 +1,8 @@
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.response_codes import ResponseCode
 from app.core.errors import ForbiddenError, NotFoundError
+from app.core.response_codes import ResponseCode
 from app.models.knowledge_base import KnowledgeBase
 from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
@@ -33,9 +33,7 @@ class KnowledgeBaseService:
 
     @staticmethod
     def get_by_id(db: Session, *, knowledge_base_id: str, user_id: str) -> KnowledgeBase:
-        knowledge_base = KnowledgeBaseRepository.get_by_id(
-            db, knowledge_base_id=knowledge_base_id
-        )
+        knowledge_base = KnowledgeBaseRepository.get_by_id(db, knowledge_base_id=knowledge_base_id)
         if not knowledge_base:
             raise NotFoundError(
                 code=ResponseCode.KNOWLEDGE_BASE_NOT_FOUND,
@@ -57,9 +55,7 @@ class KnowledgeBaseService:
         page_size: int = 20,
     ) -> tuple[list[KnowledgeBase], int]:
         offset = (page - 1) * page_size
-        return KnowledgeBaseRepository.list_by_user(
-            db, user_id=user_id, offset=offset, limit=page_size
-        )
+        return KnowledgeBaseRepository.list_by_user(db, user_id=user_id, offset=offset, limit=page_size)
 
     @staticmethod
     def update(
@@ -70,9 +66,7 @@ class KnowledgeBaseService:
         name: str | None = None,
         description: str | None = None,
     ) -> KnowledgeBase:
-        knowledge_base = KnowledgeBaseService.get_by_id(
-            db, knowledge_base_id=knowledge_base_id, user_id=user_id
-        )
+        knowledge_base = KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
         if name is not None:
             knowledge_base.name = name
         if description is not None:
@@ -83,8 +77,6 @@ class KnowledgeBaseService:
 
     @staticmethod
     def delete(db: Session, *, knowledge_base_id: str, user_id: str) -> None:
-        knowledge_base = KnowledgeBaseService.get_by_id(
-            db, knowledge_base_id=knowledge_base_id, user_id=user_id
-        )
+        knowledge_base = KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
         KnowledgeBaseRepository.delete(db, knowledge_base=knowledge_base)
         logger.info("knowledge_base deleted", knowledge_base_id=knowledge_base_id)
