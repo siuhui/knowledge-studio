@@ -1,12 +1,10 @@
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, File, Form, UploadFile
 
 from app.core.response_codes import ResponseCode
-from app.dependencies import get_current_user, get_db
-from app.models.user import User
+from app.dependencies import CurrentUser, DbSession
 from app.schemas.common import ApiResponse
 from app.services.document import DocumentService
 from app.services.index_pipeline import index_document
@@ -19,10 +17,10 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
 @router.post("/upload", response_model=ApiResponse[dict[str, Any]])
 async def upload_document(
+    db: DbSession,
+    current_user: CurrentUser,
     file: UploadFile = File(...),
     source_id: str = Form(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[dict[str, Any]]:
     # Verify source exists
     source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
@@ -54,9 +52,9 @@ async def upload_document(
 
 @router.get("/{document_id}", response_model=ApiResponse[dict[str, Any]])
 def get_document(
+    db: DbSession,
+    current_user: CurrentUser,
     document_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[dict[str, Any]]:
     document = DocumentService.get_by_id(db, document_id=document_id)
     return ApiResponse[dict[str, Any]](
@@ -76,9 +74,9 @@ def get_document(
 
 @router.delete("/{document_id}", response_model=ApiResponse[None])
 def delete_document(
+    db: DbSession,
+    current_user: CurrentUser,
     document_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[None]:
     DocumentService.delete(db, document_id=document_id)
     return ApiResponse[None](code=ResponseCode.OK, message="Document deleted", data=None)

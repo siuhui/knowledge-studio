@@ -12,14 +12,12 @@ import secrets
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, BackgroundTasks
 
 from app.config import settings
 from app.core.errors import ValidationError
 from app.core.response_codes import ResponseCode
-from app.dependencies import get_current_user, get_db
-from app.models.user import User
+from app.dependencies import CurrentUser, DbSession
 from app.schemas.common import ApiResponse
 from app.schemas.upload import (
     PresignRequest,
@@ -67,10 +65,10 @@ def _make_object_key(kb_id: str, source_id: str, filename: str) -> str:
     response_model=ApiResponse[PresignResponse],
 )
 def create_presign(
+    db: DbSession,
+    current_user: CurrentUser,
     source_id: str,
     payload: PresignRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[PresignResponse]:
     """Generate a presigned POST URL for browser-to-MinIO direct upload."""
     # Verify source exists and user owns its knowledge base
@@ -126,11 +124,11 @@ def create_presign(
     response_model=ApiResponse[UploadCompleteResponse],
 )
 def complete_upload(
+    db: DbSession,
+    current_user: CurrentUser,
     source_id: str,
     payload: UploadCompleteRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[UploadCompleteResponse]:
     """Validate uploaded object, activate source, and trigger indexing."""
     # Verify source exists and user owns its knowledge base
@@ -190,8 +188,9 @@ def complete_upload(
     }
     SourceService.update_config_and_activate(db, source_id=source_id, config=config)
 
-    # must see the updated source status (pending → active).
-    db.commit()
+    # Commit is handled by DbSession (scope="function") — runs before
+    # the response is sent and before background tasks fire, so the
+    # indexing task sees the active status.
 
     # Schedule background indexing (creates its own DB session)
     background_tasks.add_task(

@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import Annotated
 
 import structlog
 from fastapi import Depends
@@ -25,8 +26,18 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+# DbSession: request-scoped DB session that commits before the HTTP response is
+# sent (scope="function"). The default scope="request" would defer commit until
+# after the response — so a fast client polling for the result of a write may
+# see stale data.
+#
+# Place DbSession before parameters that have defaults to satisfy Python's
+# "non-default argument follows default argument" ordering rule.
+DbSession = Annotated[Session, Depends(get_db, scope="function")]
+
+
 def get_current_user(
-    db: Session = Depends(get_db),
+    db: DbSession,
     token: str = Depends(oauth2_scheme),
 ) -> User:
     """
@@ -38,3 +49,6 @@ def get_current_user(
     user = AuthService.get_user_from_token(db, token)
     structlog.contextvars.bind_contextvars(user_id=user.id)
     return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]

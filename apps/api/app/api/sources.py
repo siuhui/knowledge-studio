@@ -1,11 +1,9 @@
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, BackgroundTasks, Query
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
-from app.dependencies import get_current_user, get_db
-from app.models.user import User
+from app.dependencies import CurrentUser, DbSession
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
 from app.schemas.source import SourceCreate, SourceItem
@@ -23,10 +21,10 @@ router = APIRouter(tags=["sources"])
     response_model=ApiResponse[SourceItem],
 )
 def create_source(
+    db: DbSession,
+    current_user: CurrentUser,
     knowledge_base_id: str,
     payload: SourceCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[SourceItem]:
     """Create a source in pending status. Upload and indexing happen separately."""
     source = SourceService.create(
@@ -51,11 +49,11 @@ def create_source(
     response_model=PaginatedResponse[SourceItem],
 )
 def list_sources(
+    db: DbSession,
+    current_user: CurrentUser,
     knowledge_base_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> PaginatedResponse[SourceItem]:
     items, total = SourceService.list_by_knowledge_base(
         db, knowledge_base_id=knowledge_base_id, user_id=current_user.id, page=page, page_size=page_size
@@ -78,9 +76,9 @@ def list_sources(
     response_model=ApiResponse[None],
 )
 def delete_source(
+    db: DbSession,
+    current_user: CurrentUser,
     source_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[None]:
     SourceService.delete(db, source_id=source_id, user_id=current_user.id)
     return ApiResponse[None](code=ResponseCode.OK, message="Source deleted", data=None)
@@ -91,11 +89,11 @@ def delete_source(
     response_model=PaginatedResponse[dict[str, object]],
 )
 def list_documents(
+    db: DbSession,
+    current_user: CurrentUser,
     source_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> PaginatedResponse[dict[str, object]]:
     """List documents belonging to a source."""
     source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
@@ -134,10 +132,10 @@ def list_documents(
     response_model=ApiResponse[dict[str, object]],
 )
 def extract_source(
+    db: DbSession,
+    current_user: CurrentUser,
     source_id: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> ApiResponse[dict[str, object]]:
     """Re-extract a source: download from MinIO and re-run indexing pipeline.
 
@@ -164,8 +162,9 @@ def extract_source(
     try:
         ObjectStorageService.head_object(key=s3_key)
     except NotFoundError:
-        source.status = "error"
-        db.commit()
+        # mark_error creates its own session and commits — safe from the
+        # current transaction's rollback caused by the ValidationError below.
+        SourceService.mark_error(source_id=source_id)
         logger.warning(
             "source object not found, marked as error",
             source_id=source_id,
