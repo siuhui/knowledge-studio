@@ -10,23 +10,28 @@ import {
   uploadToPresignedUrl,
   getContentType,
   listSourceDocuments,
+  listKnowledgeBaseDocuments,
+  getDocumentChunks,
 } from "@/lib/api";
 import { useToast } from "@/hooks/useToast";
+import { usePanelResize } from "@/hooks/usePanelResize";
 import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
-import { StudioPanel } from "@/components/knowledge-bases/StudioPanel";
+import { DetailPanel } from "@/components/knowledge-bases/DetailPanel";
 import { AddSourceModal } from "@/components/knowledge-bases/AddSourceModal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { flattenDocs } from "@/lib/types";
 import type {
   Citation,
   Document,
+  DocumentDetail,
   FlatDocument,
   KnowledgeBase,
+  PanelState,
   QaResponse,
   Source,
   SourceNode,
 } from "@/lib/types";
-import type { StudioSourceDetail } from "@/components/knowledge-bases/StudioPanel";
+import type { DetailSourceDetail } from "@/components/knowledge-bases/DetailPanel";
 
 // ── Message types ──
 interface ChatMessage {
@@ -35,6 +40,150 @@ interface ChatMessage {
   content: string;
   citations?: Citation[];
   createdAt: string;
+}
+
+// ── Shared chat area (used in both normal and maximized layouts) ──
+
+interface ChatAreaProps {
+  panelMode: "normal" | "maximized";
+  isDragging: boolean;
+  hasMessages: boolean;
+  messages: ChatMessage[];
+  thinking: boolean;
+  hasDocs: boolean;
+  input: string;
+  checkedDocIds: Set<string>;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onSend: () => void;
+  width?: number;
+}
+
+function ChatArea({
+  panelMode,
+  isDragging,
+  hasMessages,
+  messages,
+  thinking,
+  hasDocs,
+  input,
+  checkedDocIds,
+  scrollRef,
+  inputRef,
+  onInputChange,
+  onKeyDown,
+  onSend,
+  width,
+}: ChatAreaProps) {
+  const isMaximized = panelMode === "maximized";
+
+  return (
+    <div
+      className={`flex flex-col h-full bg-white ${
+        isMaximized
+          ? "shrink-0 border-l border-gray-200"
+          : "flex-1 min-w-[360px]"
+      } ${!isDragging ? "transition-all duration-300 ease-in-out" : ""}`}
+      style={isMaximized && width ? { width } : undefined}
+    >
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        {hasMessages ? (
+          <div className={isMaximized ? "py-4 px-3" : "mx-auto py-6 px-4"}>
+            {messages.map((msg) => (
+              <MessageBubble key={msg.id} message={msg} />
+            ))}
+            {thinking && (
+              <div className={`flex items-center gap-3 ${isMaximized ? "px-2 py-3" : "px-6 py-4"}`}>
+                <div className={`rounded-full bg-[#1A1A1A] flex items-center justify-center shrink-0 ${
+                  isMaximized ? "w-6 h-6" : "w-7 h-7"
+                }`}>
+                  <span className={`font-semibold text-white ${isMaximized ? "text-[10px]" : "text-[11px]"}`}>
+                    AI
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.15s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.3s]" />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <EmptyChat hasDocs={hasDocs} />
+        )}
+      </div>
+
+      {/* Input area */}
+      <div className={isMaximized ? "px-2 pb-3 pt-1" : "px-6 pb-6 pt-2"}>
+        <div className={isMaximized ? "" : "mx-auto"}>
+          <div
+            className={`bg-white border transition-all duration-200 ${
+              isMaximized ? "rounded-lg" : "rounded-xl shadow-md"
+            } ${input.length > 0 ? "border-gray-300" : "border-gray-200/80"}`}
+          >
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={onInputChange}
+              onKeyDown={onKeyDown}
+              placeholder={
+                !hasDocs
+                  ? isMaximized ? "Select documents…" : "Select documents from the sidebar to begin…"
+                  : isMaximized ? "Ask a question…" : "Ask a question about your documents…"
+              }
+              rows={1}
+              className={`w-full resize-none rounded-xl px-4 py-3 text-sm text-[#2F3437]
+                placeholder:text-gray-300 outline-none
+                focus:border-gray-400 focus:ring-0
+                transition-colors duration-200
+                bg-transparent`}
+            />
+            <div className={`flex items-center justify-between ${isMaximized ? "px-2 pb-2" : "px-3 pb-3"}`}>
+              <span className={isMaximized ? "text-[9px] text-gray-300" : "text-[10px] text-gray-300"}>
+                {!hasDocs
+                  ? isMaximized ? "No docs" : "No documents selected"
+                  : `${checkedDocIds.size} document${checkedDocIds.size === 1 ? "" : "s"} in context`}
+              </span>
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={input.trim().length === 0 || thinking || !hasDocs}
+                className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
+                  transition-all duration-200
+                  disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed ${
+                    isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
+                  }`}
+                aria-label="Send message"
+              >
+                <svg
+                  width={isMaximized ? 11 : 14}
+                  height={isMaximized ? 11 : 14}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {!isMaximized && (
+            <p className="text-[10px] text-gray-300 text-center mt-2">
+              Press Enter to send, Shift+Enter for new line
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Message bubble ──
@@ -140,13 +289,21 @@ export default function WorkspacePage() {
   // Documents (loaded per-source, keyed by source_id)
   const [documentsBySource, setDocumentsBySource] = useState<Record<string, Document[]>>({});
 
+  // Orphaned documents (source deleted, source_id = null)
+  const [orphanedDocuments, setOrphanedDocuments] = useState<Document[]>([]);
+
   // Upload
   const [uploading, setUploading] = useState(false);
   const [uploadStage, setUploadStage] = useState("");
 
-  // Delete
+  // Delete source
   const [deleteSourceId, setDeleteSourceId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deletingSource, setDeletingSource] = useState(false);
+
+  // Delete document
+  const [deleteDocumentId, setDeleteDocumentId] = useState<string | null>(null);
+  const [documentTitleToDelete, setDocumentTitleToDelete] = useState("");
+  const [deletingDocument, setDeletingDocument] = useState(false);
 
   // Re-extract
   const [extractingSourceId, setExtractingSourceId] = useState<string | null>(null);
@@ -158,7 +315,13 @@ export default function WorkspacePage() {
   const [addSourceOpen, setAddSourceOpen] = useState(false);
 
   // Studio
-  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const [panelState, setPanelState] = useState<PanelState>({ type: "empty" });
+
+  // Document cache + loading
+  const documentCacheRef = useRef<Map<string, DocumentDetail>>(new Map());
+  const [documentCache, setDocumentCache] = useState<Map<string, DocumentDetail>>(new Map());
+  const [loadingDocument, setLoadingDocument] = useState(false);
+  const [documentError, setDocumentError] = useState("");
 
   // Chat
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -166,6 +329,15 @@ export default function WorkspacePage() {
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // ── Layout: panel resizing & modes ──
+  type PanelMode = "normal" | "maximized";
+  const [panelMode, setPanelMode] = useState<PanelMode>("normal");
+  const { width: rightPanelWidth, isDragging: isDraggingRight, dragHandleProps } = usePanelResize(400);
+  // Second resize hook for the chat sidebar width in maximized mode
+  const { width: chatSidebarWidth, isDragging: isDraggingChat, dragHandleProps: chatDragHandleProps } =
+    usePanelResize(340);
+  const isDragging = isDraggingRight || isDraggingChat;
 
   // ── Derived: SourceNode[] ──
   const sourceNodes = useMemo<SourceNode[]>(() => {
@@ -184,19 +356,31 @@ export default function WorkspacePage() {
           title: d.title,
           version: "v1",
           description: `${d.source_format} document`,
+          status: d.status,
         })),
       };
     });
   }, [sources, documentsBySource]);
 
   const documents = useMemo<FlatDocument[]>(() => {
-    return flattenDocs(sourceNodes);
-  }, [sourceNodes]);
+    const fromSources = flattenDocs(sourceNodes);
+    const orphans: FlatDocument[] = orphanedDocuments.map((d) => ({
+      id: d.id,
+      sourceId: undefined,
+      sourceName: undefined,
+      sourceType: undefined,
+      title: d.title,
+      version: "v1",
+      description: `${d.source_format} document`,
+      status: d.status,
+    }));
+    return [...fromSources, ...orphans];
+  }, [sourceNodes, orphanedDocuments]);
 
   // ── Derived: active source for Studio detail view ──
-  const activeSource = useMemo<StudioSourceDetail | null>(() => {
-    if (!activeSourceId) return null;
-    const src = sources.find((s) => s.id === activeSourceId);
+  const activeSource = useMemo<DetailSourceDetail | null>(() => {
+    if (panelState.type !== "source") return null;
+    const src = sources.find((s) => s.id === panelState.sourceId);
     if (!src) return null;
     const config = src.config as Record<string, unknown> | null;
     const name = (config?.original_name as string) ?? `Source ${src.id.slice(0, 8)}`;
@@ -212,10 +396,17 @@ export default function WorkspacePage() {
         title: d.title,
         version: "v1",
         description: `${d.source_format} document`,
+        status: d.status,
         createdAt: d.created_at,
       })),
     };
-  }, [activeSourceId, sources, documentsBySource]);
+  }, [panelState, sources, documentsBySource]);
+
+  // ── Derived: active document from cache ──
+  const activeDocument = useMemo<DocumentDetail | null>(() => {
+    if (panelState.type !== "document") return null;
+    return documentCache.get(panelState.documentId) ?? null;
+  }, [panelState, documentCache]);
 
   // ── Load KB name ──
   useEffect(() => {
@@ -234,6 +425,7 @@ export default function WorkspacePage() {
       setSources(result.data);
 
       // Load documents for all sources in parallel
+      const bySource: Record<string, Document[]> = {};
       if (result.data.length > 0) {
         const docResults = await Promise.all(
           result.data.map(async (s) => {
@@ -245,11 +437,24 @@ export default function WorkspacePage() {
             }
           }),
         );
-        const bySource: Record<string, Document[]> = {};
         for (const { sourceId, docs } of docResults) {
           bySource[sourceId] = docs;
         }
         setDocumentsBySource(bySource);
+      }
+
+      // Fetch KB-level documents to catch orphans (source deleted)
+      try {
+        const kbDocs = await listKnowledgeBaseDocuments(kbId);
+        const allSourceDocIds = new Set(
+          Object.values(bySource).flat().map((d) => d.id),
+        );
+        const orphaned = kbDocs.filter(
+          (d) => d.source_id === null && !allSourceDocIds.has(d.id),
+        );
+        setOrphanedDocuments(orphaned);
+      } catch {
+        setOrphanedDocuments([]);
       }
     } catch (err) {
       setSourcesError(err instanceof Error ? err.message : "Failed to load sources");
@@ -261,6 +466,29 @@ export default function WorkspacePage() {
   useEffect(() => {
     loadSources();
   }, [loadSources]);
+
+  // ── Smart polling: refresh while any docs are in a transitional state ──
+  // Terminal statuses: "active" | "error". Non-terminal: "processing" | "pending" | "parsed".
+  // Also polls when an active source has zero documents (pipeline hasn't created them yet).
+  useEffect(() => {
+    if (sourcesFirstLoad) return;
+
+    const hasTransitionalDoc = Object.values(documentsBySource).some((docs) =>
+      docs.some((d) => d.status === "processing" || d.status === "pending" || d.status === "parsed"),
+    );
+
+    const hasEmptyActiveSource = sources.some(
+      (s) => s.status === "active" && (documentsBySource[s.id] ?? []).length === 0,
+    );
+
+    if (!hasTransitionalDoc && !hasEmptyActiveSource) return;
+
+    const interval = setInterval(() => {
+      loadSources();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [sourcesFirstLoad, documentsBySource, sources, loadSources]);
 
   // ── Auto-scroll chat ──
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers scroll
@@ -329,12 +557,70 @@ export default function WorkspacePage() {
   );
 
   const handleTraceSource = useCallback((sourceId: string) => {
-    setActiveSourceId(sourceId);
+    setPanelState({ type: "source", sourceId });
   }, []);
 
   const handleBack = useCallback(() => {
-    setActiveSourceId(null);
+    setPanelState({ type: "empty" });
+    // Reset panel mode to normal when navigating away from document/source views
+    setPanelMode("normal");
   }, []);
+
+  // Select document — show content in right panel
+  const handleSelectDocument = useCallback(
+    async (docId: string) => {
+      setPanelState({ type: "document", documentId: docId });
+      setDocumentError("");
+
+      // Cache hit — render immediately
+      if (documentCacheRef.current.has(docId)) {
+        // Force re-render so activeDocument picks up from cache
+        setDocumentCache(new Map(documentCacheRef.current));
+        return;
+      }
+
+      setLoadingDocument(true);
+      try {
+        const detail = await getDocumentChunks(docId);
+        documentCacheRef.current.set(docId, detail);
+        setDocumentCache(new Map(documentCacheRef.current));
+      } catch (err) {
+        setDocumentError(err instanceof Error ? err.message : "Failed to load document");
+        documentCacheRef.current.delete(docId);
+      } finally {
+        setLoadingDocument(false);
+      }
+    },
+    [],
+  );
+
+  // Retry loading a document that failed
+  const handleRetryDocument = useCallback(() => {
+    if (panelState.type !== "document") return;
+    const docId = panelState.documentId;
+    documentCacheRef.current.delete(docId);
+    setDocumentCache(new Map(documentCacheRef.current));
+    handleSelectDocument(docId);
+  }, [panelState, handleSelectDocument]);
+
+  // ── Panel mode handlers (maximize / restore) ──
+
+  const handleMaximizePanel = useCallback(() => {
+    setPanelMode("maximized");
+  }, []);
+
+  const handleRestorePanel = useCallback(() => {
+    setPanelMode("normal");
+  }, []);
+
+  // ── Auto-reset panel mode when navigating away from a document ──
+  // Prevents layout deadlock: if user is in maximized mode and clicks "Back", reset to normal
+  // clicks "Back" or switches to source view, reset to normal layout.
+  useEffect(() => {
+    if (panelState.type !== "document" && panelMode !== "normal") {
+      setPanelMode("normal");
+    }
+  }, [panelState.type, panelMode]);
 
   // Re-extract flow
   const handleReExtract = useCallback(
@@ -362,25 +648,49 @@ export default function WorkspacePage() {
   // Delete: execute
   const confirmDeleteSource = useCallback(async () => {
     if (!deleteSourceId) return;
-    setDeleting(true);
+    setDeletingSource(true);
     try {
       await api(`/api/v1/sources/${deleteSourceId}`, { method: "DELETE" });
-      addToast("success", "Source deleted");
+      addToast("success", "Source deleted. Documents preserved in knowledge base.");
       setDeleteSourceId(null);
-      setActiveSourceId(null);
-      setSources((prev) => prev.filter((s) => s.id !== deleteSourceId));
-      setDocumentsBySource((prev) => {
-        const next = { ...prev };
-        delete next[deleteSourceId];
-        return next;
-      });
+      setPanelState({ type: "empty" });
+      // Reload — source disappears, its documents reappear as orphaned
+      await loadSources();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Delete failed";
       addToast("error", msg);
     } finally {
-      setDeleting(false);
+      setDeletingSource(false);
     }
-  }, [deleteSourceId, addToast]);
+  }, [deleteSourceId, addToast, loadSources]);
+
+  // Delete document: open confirm modal (called from sidebar trash icon or header dropdown)
+  const handleDeleteDocument = useCallback((docId: string, docTitle: string) => {
+    setDeleteDocumentId(docId);
+    setDocumentTitleToDelete(docTitle);
+  }, []);
+
+  // Delete document: execute
+  const confirmDeleteDocument = useCallback(async () => {
+    if (!deleteDocumentId) return;
+    setDeletingDocument(true);
+    try {
+      await api(`/api/v1/documents/${deleteDocumentId}`, { method: "DELETE" });
+      addToast("success", `"${documentTitleToDelete}" deleted`);
+      setDeleteDocumentId(null);
+      setDocumentTitleToDelete("");
+      // Clear panel, cache, and reload
+      setPanelState({ type: "empty" });
+      documentCacheRef.current.delete(deleteDocumentId);
+      setDocumentCache(new Map(documentCacheRef.current));
+      await loadSources();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      addToast("error", msg);
+    } finally {
+      setDeletingDocument(false);
+    }
+  }, [deleteDocumentId, documentTitleToDelete, addToast, loadSources]);
 
   const handleSend = useCallback(async () => {
     const query = input.trim();
@@ -468,131 +778,120 @@ export default function WorkspacePage() {
         documents={documents}
         sources={sources}
         checkedDocIds={checkedDocIds}
-        activeSourceId={activeSourceId}
+        activeSourceId={panelState.type === "source" ? panelState.sourceId : null}
         sourcesFirstLoad={sourcesFirstLoad}
         sourcesError={sourcesError}
         onToggleDocument={handleToggleDocument}
         onAddSource={() => setAddSourceOpen(true)}
-        onSelectSource={setActiveSourceId}
+        onSelectSource={(sourceId) => setPanelState({ type: "source", sourceId })}
+        onSelectDocument={handleSelectDocument}
         onTraceSource={handleTraceSource}
       />
 
-      {/* ══ Center: Chat canvas ══ */}
-      <div className="flex-1 flex flex-col h-full bg-white min-w-0">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          {hasMessages ? (
-            <div className="max-w-[640px] mx-auto py-6">
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
-              ))}
-              {thinking && (
-                <div className="flex items-center gap-3 px-6 py-4">
-                  <div className="w-7 h-7 rounded-full bg-[#1A1A1A] flex items-center justify-center">
-                    <span className="text-[11px] font-semibold text-white">AI</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.15s]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.3s]" />
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <EmptyChat hasDocs={hasDocs} />
-          )}
-        </div>
+      {/* ══ Center & Right: layout varies by panelMode ══ */}
 
-        {/* Floating input */}
-        <div className="px-6 pb-6 pt-2">
-          <div className="max-w-[640px] mx-auto">
-            <div
-              className={`rounded-xl bg-white border shadow-md transition-all duration-200 ${
-                input.length > 0 ? "border-gray-300" : "border-gray-200/80"
-              }`}
-            >
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  !hasDocs
-                    ? "Select documents from the sidebar to begin…"
-                    : "Ask a question about your documents…"
-                }
-                rows={1}
-                className="w-full resize-none rounded-xl px-4 py-3 text-sm text-[#2F3437]
-                  placeholder:text-gray-300 outline-none
-                  focus:border-gray-400 focus:ring-0
-                  transition-colors duration-200
-                  bg-transparent"
-              />
-              <div className="flex items-center justify-between px-3 pb-3">
-                <span className="text-[10px] text-gray-300">
-                  {!hasDocs
-                    ? "No documents selected"
-                    : `${checkedDocIds.size} document${checkedDocIds.size === 1 ? "" : "s"} in context`}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={input.trim().length === 0 || thinking || !hasDocs}
-                  className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center
-                    bg-[#1A1A1A] text-white hover:bg-[#2F3437]
-                    transition-all duration-200
-                    disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
-                  aria-label="Send message"
-                >
-                  {thinking ? (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="animate-spin"
-                      aria-hidden="true"
-                    >
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                  ) : (
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-            <p className="text-[10px] text-gray-300 text-center mt-2">
-              Press Enter to send, Shift+Enter for new line
-            </p>
+      {/* ── Normal: [Chat flex-1] [Handle] [DetailPanel fixed] ── */}
+      {panelMode === "normal" && (
+        <>
+          <ChatArea
+            panelMode="normal"
+            isDragging={isDragging}
+            hasMessages={hasMessages}
+            messages={messages}
+            thinking={thinking}
+            hasDocs={hasDocs}
+            input={input}
+            checkedDocIds={checkedDocIds}
+            scrollRef={scrollRef}
+            inputRef={inputRef}
+            onInputChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onSend={handleSend}
+          />
+
+          <div
+            {...dragHandleProps}
+            className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
+              hover:bg-gray-200/60 active:bg-gray-300/60 transition-colors duration-150
+              ${isDraggingRight ? "bg-gray-200/60" : ""}`}
+          >
+            <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
           </div>
-        </div>
-      </div>
 
-      {/* ══ Right: Studio panel ══ */}
-      <StudioPanel
-        activeSource={activeSource}
-        extracting={extractingSourceId !== null}
-        onBack={handleBack}
-        onReExtract={handleReExtract}
-        onDeleteSource={handleDeleteSource}
-      />
+          <div className="h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60 overflow-hidden shrink-0"
+            style={{ width: rightPanelWidth }}
+          >
+            <DetailPanel
+              panelState={panelState}
+              activeSource={activeSource}
+              activeDocument={activeDocument}
+              loadingDocument={loadingDocument}
+              documentError={documentError}
+              extracting={extractingSourceId !== null}
+              panelMode={panelMode}
+              onBack={handleBack}
+              onReExtract={handleReExtract}
+              onDeleteSource={handleDeleteSource}
+              onSelectDocument={handleSelectDocument}
+              onRetryDocument={handleRetryDocument}
+              onMaximize={handleMaximizePanel}
+              onRestore={handleRestorePanel}
+              onDeleteDocument={handleDeleteDocument}
+            />
+          </div>
+        </>
+      )}
+
+      {/* ── Maximized: [DetailPanel flex-1] [Handle] [Chat fixed right] ── */}
+      {panelMode === "maximized" && (
+        <>
+          <div className="h-full bg-[#F7F7F5] flex flex-col overflow-hidden flex-1 w-0">
+            <DetailPanel
+              panelState={panelState}
+              activeSource={activeSource}
+              activeDocument={activeDocument}
+              loadingDocument={loadingDocument}
+              documentError={documentError}
+              extracting={extractingSourceId !== null}
+              panelMode={panelMode}
+              onBack={handleBack}
+              onReExtract={handleReExtract}
+              onDeleteSource={handleDeleteSource}
+              onSelectDocument={handleSelectDocument}
+              onRetryDocument={handleRetryDocument}
+              onMaximize={handleMaximizePanel}
+              onRestore={handleRestorePanel}
+              onDeleteDocument={handleDeleteDocument}
+            />
+          </div>
+
+          <div
+            {...chatDragHandleProps}
+            className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
+              hover:bg-gray-200/60 active:bg-gray-300/60 transition-colors duration-150
+              ${isDraggingChat ? "bg-gray-200/60" : ""}`}
+          >
+            <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
+          </div>
+
+          <ChatArea
+            panelMode="maximized"
+            isDragging={isDragging}
+            hasMessages={hasMessages}
+            messages={messages}
+            thinking={thinking}
+            hasDocs={hasDocs}
+            input={input}
+            checkedDocIds={checkedDocIds}
+            scrollRef={scrollRef}
+            inputRef={inputRef}
+            onInputChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onSend={handleSend}
+            width={chatSidebarWidth}
+          />
+        </>
+      )}
 
       {/* ══ Modals ══ */}
       <AddSourceModal
@@ -604,12 +903,26 @@ export default function WorkspacePage() {
       <ConfirmModal
         open={deleteSourceId !== null}
         title="Delete Source"
-        message="This will permanently delete the source and all its documents and files. This action cannot be undone."
+        message="This will permanently delete the original source and uploaded files. Extracted documents will remain in the knowledge base and continue to be searchable."
         confirmLabel="Delete"
         danger
-        loading={deleting}
+        loading={deletingSource}
         onConfirm={confirmDeleteSource}
         onCancel={() => setDeleteSourceId(null)}
+      />
+
+      <ConfirmModal
+        open={deleteDocumentId !== null}
+        title="Delete Document?"
+        message={`Are you sure you want to delete '${documentTitleToDelete}'? This will remove its chunks from the AI context and cannot be undone.`}
+        confirmLabel="Confirm Delete"
+        danger
+        loading={deletingDocument}
+        onConfirm={confirmDeleteDocument}
+        onCancel={() => {
+          setDeleteDocumentId(null);
+          setDocumentTitleToDelete("");
+        }}
       />
     </div>
   );

@@ -20,6 +20,7 @@ interface LeftSidebarProps {
   onToggleDocument: (docId: string) => void;
   onAddSource: () => void;
   onSelectSource: (sourceId: string) => void;
+  onSelectDocument: (documentId: string) => void;
   onTraceSource: (sourceId: string) => void;
 }
 
@@ -36,6 +37,7 @@ export function LeftSidebar({
   onToggleDocument,
   onAddSource,
   onSelectSource,
+  onSelectDocument,
   onTraceSource,
 }: LeftSidebarProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("documents");
@@ -134,6 +136,7 @@ export function LeftSidebar({
           documents={documents}
           checkedDocIds={checkedDocIds}
           onToggleDocument={onToggleDocument}
+          onSelectDocument={onSelectDocument}
           onTraceSource={handleTraceSource}
         />
       ) : (

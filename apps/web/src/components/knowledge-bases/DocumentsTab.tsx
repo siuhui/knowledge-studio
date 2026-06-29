@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { FlatDocument } from "@/lib/types";
+import { StatusBadge } from "./StatusBadge";
 
 // ── Icons ──
 
@@ -133,6 +134,8 @@ interface DocumentsTabProps {
   documents: FlatDocument[];
   checkedDocIds: Set<string>;
   onToggleDocument: (docId: string) => void;
+  /** Called when user clicks a document row — opens document content in the right panel */
+  onSelectDocument?: (documentId: string) => void;
   /** Called when user clicks the source trace link — switches to Sources tab + selects source */
   onTraceSource?: (sourceId: string) => void;
 }
@@ -141,6 +144,7 @@ export function DocumentsTab({
   documents,
   checkedDocIds,
   onToggleDocument,
+  onSelectDocument,
   onTraceSource,
 }: DocumentsTabProps) {
   const [search, setSearch] = useState("");
@@ -191,11 +195,23 @@ export function DocumentsTab({
           <div className="space-y-1">
             {filtered.map((doc) => {
               const isChecked = checkedDocIds.has(doc.id);
+              const sourceId = doc.sourceId;
 
               return (
                 <div
                   key={doc.id}
-                  className={`rounded-lg border transition-all duration-200 p-2.5 group ${
+                  // biome-ignore lint/a11y/useSemanticElements: interactive card with nested controls
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectDocument?.(doc.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectDocument?.(doc.id);
+                    }
+                  }}
+                  aria-label={`View document: ${doc.title}`}
+                  className={`rounded-lg border transition-all duration-200 p-2.5 group cursor-pointer ${
                     isChecked
                       ? "bg-white border-gray-300 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
                       : "bg-transparent border-transparent hover:bg-white/60 hover:border-gray-200/60"
@@ -218,32 +234,42 @@ export function DocumentsTab({
                         </span>
                       </div>
                     </div>
+                    <StatusBadge status={doc.status} />
                   </div>
 
-                  {/* Source trace line */}
-                  <button
-                    type="button"
-                    onClick={() => onTraceSource?.(doc.sourceId)}
-                    className="flex items-center gap-1 mt-2 ml-[26px] text-[10px] text-gray-300
-                      hover:text-gray-500 transition-colors duration-200 group/trace"
-                  >
-                    {doc.sourceType === "upload" ? <FileIcon /> : <LinkIcon />}
-                    <span className="truncate max-w-[180px]">from {doc.sourceName}</span>
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="shrink-0 opacity-0 group-hover/trace:opacity-100 transition-opacity duration-200"
-                      aria-hidden="true"
+                  {/* Source trace line — only for non-orphaned documents */}
+                  {sourceId ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTraceSource?.(sourceId);
+                      }}
+                      className="flex items-center gap-1 mt-2 ml-[26px] text-[10px] text-gray-300
+                        hover:text-gray-500 transition-colors duration-200 group/trace"
                     >
-                      <polyline points="9 18 15 12 9 6" />
-                    </svg>
-                  </button>
+                      {doc.sourceType === "upload" ? <FileIcon /> : <LinkIcon />}
+                      <span className="truncate max-w-[180px]">from {doc.sourceName}</span>
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="shrink-0 opacity-0 group-hover/trace:opacity-100 transition-opacity duration-200"
+                        aria-hidden="true"
+                      >
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1 mt-2 ml-[26px] text-[10px] text-gray-300/60 italic">
+                      Original source deleted
+                    </div>
+                  )}
                 </div>
               );
             })}

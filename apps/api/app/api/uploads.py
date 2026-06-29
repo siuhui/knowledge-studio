@@ -196,6 +196,7 @@ def complete_upload(
     background_tasks.add_task(
         run_index_pipeline,
         source_id=source_id,
+        kb_id=source.knowledge_base_id,
         s3_key=payload.object_key,
         filename=original_filename,
     )

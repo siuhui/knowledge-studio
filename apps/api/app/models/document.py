@@ -11,13 +11,21 @@ class Document(Base):
     __tablename__ = "document"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("source.id"), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("source.id", ondelete="SET NULL"), nullable=True
+    )
+    knowledge_base_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("knowledge_base.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     path: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_format: Mapped[str] = mapped_column(String(50), nullable=False)  # pdf | markdown | text
-    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # active | processing | error
+    full_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # processing | parsed | active | error
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="processing"
+    )
     doc_version: Mapped[str] = mapped_column(String(32), default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

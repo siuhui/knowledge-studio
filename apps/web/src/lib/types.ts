@@ -19,13 +19,42 @@ export interface Source {
 
 export interface Document {
   id: string;
-  source_id: string;
+  source_id: string | null;
   title: string;
   source_format: string;
   status: string;
   created_at: string;
   updated_at: string;
 }
+
+/** A single indexed chunk within a document */
+export interface DocumentChunk {
+  id: string;
+  chunk_index: number;
+  content: string;
+  token_count: number;
+}
+
+/** Full document detail returned by GET /api/v1/documents/{id}/chunks */
+export interface DocumentDetail {
+  id: string;
+  source_id: string | null;
+  title: string;
+  source_format: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  chunk_count: number;
+  truncated: boolean;
+  chunks: DocumentChunk[];
+}
+
+// ── Panel state (workspace right panel) ──
+
+export type PanelState =
+  | { type: "empty" }
+  | { type: "source"; sourceId: string }
+  | { type: "document"; documentId: string };
 
 // ── Derived / UI types ──
 
@@ -44,17 +73,20 @@ export interface SourceDocument {
   title: string;
   version: string;
   description: string;
+  status: string;
 }
 
-/** Flattened document row for display */
+/** Flattened document row for display.
+ *  sourceId/sourceName/sourceType are undefined for orphaned docs (source deleted). */
 export interface FlatDocument {
   id: string;
-  sourceId: string;
-  sourceName: string;
-  sourceType: "upload" | "link";
+  sourceId: string | undefined;
+  sourceName: string | undefined;
+  sourceType: "upload" | "link" | undefined;
   title: string;
   version: string;
   description: string;
+  status: string;
 }
 
 export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
@@ -67,6 +99,7 @@ export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
       title: d.title,
       version: d.version,
       description: d.description,
+      status: d.status,
     })),
   );
 }

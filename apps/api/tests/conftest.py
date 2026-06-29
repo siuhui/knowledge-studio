@@ -1,3 +1,16 @@
+import os
+from pathlib import Path
+
+# Load test overrides from .env.test (gitignored) — credentials and
+# hostnames stay out of code.
+from dotenv import load_dotenv
+
+_test_file = Path(__file__).resolve().parent.parent / ".env.test"
+if _test_file.exists():
+    load_dotenv(_test_file, override=True)
+
+os.environ.setdefault("KB_ENV", "test")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text

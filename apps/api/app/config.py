@@ -1,9 +1,13 @@
+from pathlib import Path
+
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_env_dir = Path(__file__).resolve().parent.parent  # apps/api/
+
 
 class DatabaseConfig(BaseSettings):
-    url: str  # postgresql://postgres:postgres@localhost:5432/knowledgebase
+    url: str
     pg_vector_extension: str = "vector"
 
 
@@ -37,7 +41,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="KB_",
         env_nested_delimiter="__",
-        env_file=(".env", ".env.local"),
+        # Absolute paths so env_file works regardless of CWD
+        env_file=(
+            str(_env_dir / ".env"),
+            str(_env_dir / ".env.local"),
+        ),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

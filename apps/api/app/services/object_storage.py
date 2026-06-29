@@ -25,11 +25,20 @@ _presign_client: Any | None = None
 def sanitize_filename(name: str) -> str:
     """Sanitize a filename for use in S3 object keys.
 
-    Strips directory components, replaces non-alphanumeric characters
-    with underscores, and truncates to 120 characters.
+    Strips directory components, replaces filesystem-hostile and control
+    characters with underscores, and truncates to 120 characters.
+
+    Preserves Unicode (CJK, accented Latin, emoji, etc.) — S3 supports UTF-8
+    keys natively.
     """
     cleaned = Path(name).name.strip()
-    return re.sub(r"[^a-zA-Z0-9._-]", "_", cleaned)[:120]
+    # Denylist approach: only replace characters that cause issues in S3
+    # keys or filesystems.  Preserve all Unicode.
+    # - Control characters (0x00-0x1F, DEL, C1 controls 0x80-0x9F)
+    # - Filesystem-hostile: \\ / : * ? " < > |
+    # - # is problematic in presigned POST form fields
+    cleaned = re.sub(r"[\x00-\x1f\x7f-\x9f\\/:*?\"<>|#]+", "_", cleaned)
+    return cleaned[:120]
 
 
 def _get_client() -> Any:

@@ -1,6 +1,7 @@
 import {
   ApiError,
   type Document,
+  type DocumentDetail,
   type PaginatedMeta,
   type PresignResponse,
   type UploadCompleteRequest,
@@ -61,35 +62,6 @@ export async function apiPaginated<T>(
   return { data: body.data as T[], meta: body.meta as PaginatedMeta, requestId: rid };
 }
 
-export async function uploadFile(
-  path: string,
-  file: File,
-  extraFields: Record<string, string>,
-): Promise<{ data: unknown; requestId: string }> {
-  const requestId = crypto.randomUUID();
-  const formData = new FormData();
-  formData.append("file", file);
-  for (const [key, value] of Object.entries(extraFields)) {
-    formData.append(key, value);
-  }
-
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "X-Request-ID": requestId,
-      ...getAuthHeader(),
-    },
-    body: formData,
-  });
-
-  const rid = res.headers.get("X-Request-ID") || requestId;
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
-    throw new ApiError(err.code, err.message, res.status, rid);
-  }
-  return { data: (await res.json()).data as unknown, requestId: rid };
-}
-
 // ── Presigned upload helpers ──
 
 export function getContentType(filename: string): string {
@@ -131,6 +103,18 @@ export async function listSourceDocuments(sourceId: string): Promise<Document[]>
   const result = await apiPaginated<Document>(
     `/api/v1/sources/${sourceId}/documents?page=1&page_size=50`,
   );
+  return result.data;
+}
+
+export async function listKnowledgeBaseDocuments(kbId: string): Promise<Document[]> {
+  const result = await apiPaginated<Document>(
+    `/api/v1/knowledge-bases/${kbId}/documents?page=1&page_size=200`,
+  );
+  return result.data;
+}
+
+export async function getDocumentChunks(documentId: string): Promise<DocumentDetail> {
+  const result = await api<DocumentDetail>(`/api/v1/documents/${documentId}/chunks`);
   return result.data;
 }
 

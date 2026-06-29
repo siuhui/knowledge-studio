@@ -1,7 +1,10 @@
-"""Indexing pipeline: parse → chunk → embed.
+"""Indexing pipeline: parse → chunk.
 
-The pipeline is deliberately minimal — no RAG framework, just direct control
-over each step as specified in engineering-standards.md §10.
+Two-stage design so re-chunking doesn't require re-parsing the original file:
+  Stage 1 — parse_document():  parse raw bytes → persist full_text on Document
+  Stage 2 — chunk_document():  read full_text → chunk → create Chunks
+
+Embedding is deferred (v0.2.0); Chunk records are created with embedding=None.
 """
 
 import hashlib
@@ -11,6 +14,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
+from app.models.document import Document
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 
@@ -68,54 +72,26 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
     return chunks
 
 
-def _reindex_document(db: Session, document_id: str) -> None:
-    """Delete existing chunks and re-index a document."""
-    document = DocumentRepository.get_by_id(db, document_id=document_id)
-    if not document:
-        logger.warning("document not found for reindexing", document_id=document_id)
-        return
-
-    # Remove old chunks
-    ChunkRepository.delete_by_document(db, document_id=document_id)
-
-    # Chunk
-    texts = _chunk_text(document.content)
-    if not texts:
-        logger.warning("no chunks generated", document_id=document_id)
-        return
-
-    # Create chunk records (embedding will be filled by the embedder)
-    chunk_records = []
-    for i, text in enumerate(texts):
-        chunk = Chunk(
-            doc_id=document_id,
-            chunk_index=i,
-            content=text,
-            token_count=_estimate_token_count(text),
-            embedding=None,  # Will be set by embedder
-        )
-        chunk_records.append(chunk)
-
-    ChunkRepository.save_batch(db, chunks=chunk_records)
-    logger.info(
-        "document indexed",
-        document_id=document_id,
-        chunk_count=len(chunk_records),
-    )
+# ── Stage 1: Parse ───────────────────────────────────────────────────────────
 
 
-def index_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: str) -> str:
-    """Full indexing pipeline: parse raw bytes → create document → chunk → embed.
+def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: str, kb_id: str) -> str:
+    """Stage 1: Parse raw bytes → create Document with full_text.
+
+    Document is created with status='parsed' and the denormalized
+    knowledge_base_id for direct ownership lookups (independent of source).
+    Chunking happens separately in stage 2 so re-chunking never requires
+    re-parsing.
 
     Returns the document ID.
     """
-    # Determine format from filename extension
+    # ── Determine format from filename extension ──
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "text"
     format_map = {"pdf": "pdf", "md": "markdown", "markdown": "markdown", "txt": "text"}
     source_format = format_map.get(ext, "text")
 
-    # Parse
-    from app.services.indexing.parser import PARSERS
+    # ── Parse ──
+    from app.services.indexing.parser import PARSERS  # noqa: E402
 
     parser = PARSERS.get(source_format)
     if not parser:
@@ -125,43 +101,104 @@ def index_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
     if not text.strip():
         logger.warning("parsed content is empty", filename=filename)
 
-    # Create document
-    content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # ── Dedup check ──
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    existing = DocumentRepository.get_by_content_hash(db, content_hash=content_hash)
+    existing = DocumentRepository.get_by_text_hash(db, text_hash=text_hash)
     if existing:
         logger.info(
-            "content hash match, skipping re-index",
+            "text hash match, skipping re-parse",
             document_id=existing.id,
             filename=filename,
         )
         return existing.id
 
-    from app.models.document import Document
-
+    # ── Create Document (parsed but not yet chunked) ──
     document = Document(
         source_id=source_id,
+        knowledge_base_id=kb_id,
         title=filename,
         path=filename,
         source_format=source_format,
-        content=text,
-        content_hash=content_hash,
-        status="active",
+        full_text=text,
+        text_hash=text_hash,
+        status="parsed",
     )
     document = DocumentRepository.save(db, document=document)
 
-    # Chunk
-    _reindex_document(db, document_id=document.id)
+    logger.info(
+        "document parsed",
+        document_id=document.id,
+        text_length=len(text),
+    )
 
     return document.id
 
 
-def run_index_pipeline(source_id: str, s3_key: str, filename: str) -> None:
+# ── Stage 2: Chunk ────────────────────────────────────────────────────────────
+
+
+def chunk_document(db: Session, *, document_id: str) -> int:
+    """Stage 2: Read Document.full_text → chunk → create Chunks → status='active'.
+
+    Deletes any existing chunks for this document before creating new ones
+    (idempotent — safe to call on already-chunked documents).
+
+    Returns the number of chunks created.
+    """
+    document = DocumentRepository.get_by_id(db, document_id=document_id)
+    if not document:
+        raise ValueError(f"Document not found: {document_id}")
+
+    # Remove old chunks (if re-chunking)
+    ChunkRepository.delete_by_document(db, document_id=document_id)
+
+    # Chunk from persisted full_text (no re-parse needed)
+    chunk_texts = _chunk_text(document.full_text)
+    if not chunk_texts:
+        logger.warning("no chunks generated", document_id=document_id)
+        chunk_texts = [document.full_text]  # fallback
+
+    # Create Chunk records
+    chunk_records = []
+    for i, chunk_text in enumerate(chunk_texts):
+        chunk = Chunk(
+            doc_id=document_id,
+            chunk_index=i,
+            content=chunk_text,
+            token_count=_estimate_token_count(chunk_text),
+            embedding=None,  # deferred to v0.2.0
+        )
+        chunk_records.append(chunk)
+
+    ChunkRepository.save_batch(db, chunks=chunk_records)
+
+    # Transition status
+    document.status = "active"
+    db.flush()
+
+    logger.info(
+        "document chunked",
+        document_id=document_id,
+        chunk_count=len(chunk_records),
+    )
+
+    return len(chunk_records)
+
+
+# ── Background task (orchestrates both stages) ────────────────────────────────
+
+
+def run_index_pipeline(source_id: str, kb_id: str, s3_key: str, filename: str) -> None:
     """Background task: download from MinIO → parse → chunk.
 
     Creates its own DB session since the request session is already
     closed when BackgroundTasks fire. If the pipeline fails, marks
     the source as error.
+
+    Receives kb_id directly (denormalized) to avoid looking up the
+    source in a background task — the source may be deleted by the
+    time this task runs.
     """
     from app.database import SessionLocal
     from app.services.object_storage import ObjectStorageService
@@ -170,9 +207,15 @@ def run_index_pipeline(source_id: str, s3_key: str, filename: str) -> None:
     db = SessionLocal()
     try:
         raw_bytes = ObjectStorageService.get(key=s3_key)
-        index_document(db, raw_bytes=raw_bytes, filename=filename, source_id=source_id)
+
+        # Stage 1: Parse
+        document_id = parse_document(db, raw_bytes=raw_bytes, filename=filename, source_id=source_id, kb_id=kb_id)
+
+        # Stage 2: Chunk
+        chunk_document(db, document_id=document_id)
+
         db.commit()
-        logger.info("index pipeline completed", source_id=source_id)
+        logger.info("index pipeline completed", source_id=source_id, document_id=document_id)
     except Exception:
         db.rollback()
         logger.exception("index pipeline failed", source_id=source_id)

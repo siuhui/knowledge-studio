@@ -1,49 +1,71 @@
 "use client";
 
+import type { DocumentDetail, PanelState } from "@/lib/types";
+import { StatusBadge } from "./StatusBadge";
+import { DocumentContentView } from "./DocumentContentView";
+
 // ── Types ──
 
-export interface StudioSourceDocument {
+export interface DetailSourceDocument {
   id: string;
   title: string;
   version: string;
   description: string;
+  status: string;
   createdAt: string;
 }
 
-export interface StudioSourceDetail {
+export interface DetailSourceDetail {
   id: string;
   name: string;
   type: "upload" | "link";
   status: string;
   createdAt: string;
-  documents: StudioSourceDocument[];
+  documents: DetailSourceDocument[];
 }
 
-interface StudioPanelProps {
-  activeSource: StudioSourceDetail | null;
+interface DetailPanelProps {
+  panelState: PanelState;
+  activeSource: DetailSourceDetail | null;
+  activeDocument: DocumentDetail | null;
+  loadingDocument: boolean;
+  documentError: string;
   extracting: boolean;
+  panelMode: "normal" | "maximized";
   onBack: () => void;
   onReExtract: (sourceId: string) => void;
   onDeleteSource: (sourceId: string) => void;
+  onSelectDocument: (documentId: string) => void;
+  onRetryDocument: () => void;
+  onMaximize: () => void;
+  onRestore: () => void;
+  onDeleteDocument?: (docId: string, docTitle: string) => void;
 }
 
-// ── Status badge ──
+// ── Focus Mode toggle icon ──
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  pending: "bg-amber-100 text-amber-700",
-  error: "bg-red-100 text-red-600",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const label = status.charAt(0).toUpperCase() + status.slice(1);
-  const color = STATUS_COLORS[status] ?? "bg-gray-100 text-gray-500";
+function SwapLayoutIcon() {
   return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${color}`}>{label}</span>
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m16 3 4 4-4 4" />
+      <path d="M20 7H4" />
+      <path d="m8 21-4-4 4-4" />
+      <path d="M4 17h16" />
+    </svg>
   );
 }
 
-// ── Placeholder view (no source selected) ──
+// ── Placeholder view (no selection) ──
 
 function EmptyDetail() {
   return (
@@ -83,12 +105,14 @@ function SourceDetailView({
   onBack,
   onReExtract,
   onDeleteSource,
+  onSelectDocument,
 }: {
-  source: StudioSourceDetail;
+  source: DetailSourceDetail;
   extracting: boolean;
   onBack: () => void;
   onReExtract: (sourceId: string) => void;
   onDeleteSource: (sourceId: string) => void;
+  onSelectDocument: (documentId: string) => void;
 }) {
   return (
     <div className="flex-1 overflow-y-auto">
@@ -144,9 +168,13 @@ function SourceDetailView({
             </p>
           ) : (
             source.documents.map((doc) => (
-              <div
+              <button
                 key={doc.id}
-                className="rounded-lg border border-gray-200/60 bg-white p-2.5 flex items-center gap-2.5"
+                type="button"
+                onClick={() => onSelectDocument(doc.id)}
+                className="w-full text-left rounded-lg border border-gray-200/60 bg-white p-2.5
+                  flex items-center gap-2.5 hover:border-gray-300 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04)]
+                  transition-all duration-200"
               >
                 <svg
                   width="14"
@@ -164,7 +192,10 @@ function SourceDetailView({
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-[#2F3437] truncate">{doc.title}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-medium text-[#2F3437] truncate">{doc.title}</p>
+                    <StatusBadge status={doc.status} />
+                  </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className="text-[10px] font-medium text-gray-400">{doc.version}</span>
                     <span className="text-[10px] text-gray-300">· {doc.description}</span>
@@ -176,7 +207,7 @@ function SourceDetailView({
                     day: "numeric",
                   })}
                 </span>
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -246,37 +277,100 @@ function SourceDetailView({
   );
 }
 
-// ── Component ──
+// ═══════════════════════════════════════════════════════════
+// DetailPanel
+// ═══════════════════════════════════════════════════════════
 
-export function StudioPanel({
+export function DetailPanel({
+  panelState,
   activeSource,
+  activeDocument,
+  loadingDocument,
+  documentError,
   extracting,
+  panelMode,
   onBack,
   onReExtract,
   onDeleteSource,
-}: StudioPanelProps) {
-  const showDetail = activeSource !== null;
+  onSelectDocument,
+  onRetryDocument,
+  onMaximize,
+  onRestore,
+  onDeleteDocument,
+}: DetailPanelProps) {
+  const showDocument = panelState.type === "document";
+  const showSource = panelState.type === "source";
+  const showEmpty = panelState.type === "empty";
+  const isMaximized = panelMode === "maximized";
 
   return (
-    <aside className="w-[22%] min-w-[260px] max-w-[320px] shrink-0 h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60">
+    <aside className="w-full h-full bg-[#F7F7F5] flex flex-col">
       {/* Header */}
       <div className="px-4 py-4 border-b border-gray-200/40">
-        <h3 className="text-sm font-semibold text-[#1A1A1A] tracking-tight">
-          {showDetail ? activeSource.name : "Source Detail"}
-        </h3>
-        <p className="text-[11px] text-gray-400 mt-0.5">
-          {showDetail ? "Source information" : "Select a source to inspect"}
-        </p>
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-[#1A1A1A] tracking-tight truncate">
+              {showDocument && activeDocument
+                ? activeDocument.title
+                : showSource && activeSource
+                  ? activeSource.name
+                  : "Detail Panel"}
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {showDocument
+                ? "Document content"
+                : showSource
+                  ? "Source information"
+                  : "Select a source to inspect"}
+            </p>
+          </div>
+
+          {/* Focus Mode toggle — document view only */}
+          {showDocument && (
+            <button
+              type="button"
+              onClick={isMaximized ? onRestore : onMaximize}
+              className="shrink-0 p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-200/50 transition-colors duration-200 ml-auto"
+              aria-label={isMaximized ? "Restore default layout" : "Swap to Document Focus Mode"}
+              title={isMaximized ? "Restore default layout" : "Swap to Document Focus Mode"}
+            >
+              <SwapLayoutIcon />
+            </button>
+          )}
+
+          {/* Restore button for non-document maximized views (soft-lock guard) */}
+          {isMaximized && !showDocument && (
+            <button
+              type="button"
+              onClick={onRestore}
+              className="shrink-0 p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-200/50 transition-colors duration-200 ml-auto"
+              aria-label="Restore default layout"
+              title="Restore default layout"
+            >
+              <SwapLayoutIcon />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Body */}
-      {showDetail ? (
+      {showDocument ? (
+        <DocumentContentView
+          document={activeDocument}
+          loading={loadingDocument}
+          error={documentError}
+          onBack={onBack}
+          onRetry={onRetryDocument}
+          onDeleteDocument={onDeleteDocument}
+        />
+      ) : showSource && activeSource ? (
         <SourceDetailView
           source={activeSource}
           extracting={extracting}
           onBack={onBack}
           onReExtract={onReExtract}
           onDeleteSource={onDeleteSource}
+          onSelectDocument={onSelectDocument}
         />
       ) : (
         <EmptyDetail />
@@ -284,7 +378,9 @@ export function StudioPanel({
 
       {/* Footer */}
       <div className="px-4 py-2.5 border-t border-gray-200/40">
-        {showDetail ? (
+        {showDocument ? (
+          <p className="text-[10px] text-gray-400 text-center">Document content — read only</p>
+        ) : showSource ? (
           <p className="text-[10px] text-gray-300 text-center">Source management — actions below</p>
         ) : (
           <p className="text-[10px] text-gray-300 text-center">Click a source in the sidebar</p>

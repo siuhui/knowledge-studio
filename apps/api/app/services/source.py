@@ -113,12 +113,14 @@ class SourceService:
 
     @staticmethod
     def delete(db: Session, *, source_id: str, user_id: str) -> None:
-        """Delete a source, its documents, and its MinIO objects.
+        """Delete a source and its MinIO objects.
+
+        Documents are preserved — the DB sets document.source_id = NULL
+        via the FK ON DELETE SET NULL constraint. Only the ingestion
+        artifact is removed; extracted documents and chunks survive.
 
         Deletes the DB record first (so the transaction can roll back if
-        it fails), then does best-effort MinIO prefix cleanup. If MinIO
-        cleanup fails, the objects become orphans cleaned by lifecycle
-        policy — the safer failure mode than dangling DB references.
+        it fails), then does best-effort MinIO prefix cleanup.
 
         Uses delete_prefix based on source_id — catches all objects
         uploaded for this source, including failed/partial uploads.
@@ -127,8 +129,9 @@ class SourceService:
 
         prefix = f"uploads/{source.knowledge_base_id}/{source_id}/"
 
-        # Delete from DB. If this fails, MinIO is untouched and both stay consistent.
-        # The actual commit happens when the request returns (get_db dependency).
+        # Delete source record. Document.source_id is set to NULL by
+        # the FK ON DELETE SET NULL constraint — documents survive.
+        # Chunks survive via Document.chunks cascade (unchanged).
         SourceRepository.delete(db, source=source)
         logger.info("source deleted", source_id=source_id)
 

@@ -4,9 +4,10 @@ from fastapi import APIRouter, BackgroundTasks, Query
 from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
 from app.dependencies import CurrentUser, DbSession
-from app.repositories.document_repository import DocumentRepository
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
+from app.schemas.document import DocumentItem
 from app.schemas.source import SourceCreate, SourceItem
+from app.services.document import DocumentService
 from app.services.index_pipeline import run_index_pipeline
 from app.services.object_storage import ObjectStorageService
 from app.services.source import SourceService
@@ -96,28 +97,17 @@ def list_documents(
     page_size: int = Query(default=50, ge=1, le=100),
 ) -> PaginatedResponse[dict[str, object]]:
     """List documents belonging to a source."""
-    source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
-    items, total = DocumentRepository.list_by_source(
+    items, total = DocumentService.list_by_source(
         db,
-        source_id=source.id,
+        source_id=source_id,
+        user_id=current_user.id,
         offset=(page - 1) * page_size,
         limit=page_size,
     )
     return PaginatedResponse[dict[str, object]](
         code=ResponseCode.OK,
         message="success",
-        data=[
-            {
-                "id": item.id,
-                "source_id": item.source_id,
-                "title": item.title,
-                "source_format": item.source_format,
-                "status": item.status,
-                "created_at": item.created_at.isoformat(),
-                "updated_at": item.updated_at.isoformat(),
-            }
-            for item in items
-        ],
+        data=[DocumentItem.model_validate(item).model_dump(mode="json") for item in items],
         meta=PaginationMeta(
             page=page,
             page_size=page_size,
@@ -180,6 +170,7 @@ def extract_source(
     background_tasks.add_task(
         run_index_pipeline,
         source_id=source_id,
+        kb_id=source.knowledge_base_id,
         s3_key=s3_key,
         filename=str(original_name),
     )

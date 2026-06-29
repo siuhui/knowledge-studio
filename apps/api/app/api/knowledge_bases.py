@@ -3,7 +3,9 @@ from fastapi import APIRouter, Query
 from app.core.response_codes import ResponseCode
 from app.dependencies import CurrentUser, DbSession
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
+from app.schemas.document import DocumentItem
 from app.schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseItem, KnowledgeBaseUpdate
+from app.services.document import DocumentService
 from app.services.knowledge_base import KnowledgeBaseService
 
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
@@ -89,3 +91,32 @@ def delete_knowledge_base(
 ) -> ApiResponse[None]:
     KnowledgeBaseService.delete(db, knowledge_base_id=knowledge_base_id, user_id=current_user.id)
     return ApiResponse[None](code=ResponseCode.OK, message="KnowledgeBase deleted", data=None)
+
+
+@router.get("/{knowledge_base_id}/documents", response_model=PaginatedResponse[dict[str, object]])
+def list_knowledge_base_documents(
+    db: DbSession,
+    current_user: CurrentUser,
+    knowledge_base_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=200, ge=1, le=500),
+) -> PaginatedResponse[dict[str, object]]:
+    """List all documents in a knowledge base, including orphaned ones (source deleted)."""
+    items, total = DocumentService.list_by_knowledge_base(
+        db,
+        knowledge_base_id=knowledge_base_id,
+        user_id=current_user.id,
+        offset=(page - 1) * page_size,
+        limit=page_size,
+    )
+    return PaginatedResponse[dict[str, object]](
+        code=ResponseCode.OK,
+        message="success",
+        data=[DocumentItem.model_validate(item).model_dump(mode="json") for item in items],
+        meta=PaginationMeta(
+            page=page,
+            page_size=page_size,
+            total=total,
+            total_pages=(total + page_size - 1) // page_size,
+        ),
+    )

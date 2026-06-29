@@ -33,5 +33,4 @@ class Source(Base):
         "Document",
         back_populates="source",
         lazy="selectin",
-        cascade="all, delete-orphan",
     )

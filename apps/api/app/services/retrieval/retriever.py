@@ -14,8 +14,7 @@ def _vector_search(
     rows = (
         db.query(Chunk, Document, Chunk.embedding.cosine_distance(query_embedding).label("score"))
         .join(Document, Chunk.doc_id == Document.id)
-        .join(Document.source)
-        .filter(Document.source.has(knowledge_base_id=knowledge_base_id))
+        .filter(Document.knowledge_base_id == knowledge_base_id)
         .filter(Chunk.embedding.is_not(None))
         .order_by("score")
         .limit(top_k * 2)
@@ -43,8 +42,7 @@ def _keyword_search(
             ).label("rank"),
         )
         .join(Document, Chunk.doc_id == Document.id)
-        .join(Document.source)
-        .filter(Document.source.has(knowledge_base_id=knowledge_base_id))
+        .filter(Document.knowledge_base_id == knowledge_base_id)
         .filter(func.to_tsvector("english", Chunk.content).match(query, postgresql_regconfig="english"))
         .order_by(text("rank DESC"))
         .limit(top_k * 2)
