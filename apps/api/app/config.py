@@ -28,13 +28,28 @@ class ObjectStorageConfig(BaseSettings):
     public_endpoint: str | None = None  # override for presigned URLs (e.g. localhost vs docker hostname)
 
 
+class EmbeddingConfig(BaseSettings):
+    """Embedding provider configuration (OpenAI-compatible API).
+
+    Uses DashScope text-embedding-v4 by default (1024 dim).
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    api_key: SecretStr
+    base_url: str | None = None
+    model: str = "text-embedding-v4"
+    dimension: int = 1024
+    batch_size: int = 100
+
+
 class LLMConfig(BaseSettings):
+    model_config = SettingsConfigDict(extra="ignore")
+
     provider: str = "openai"
     api_key: SecretStr
     base_url: str | None = None
     chat_model: str = "gpt-4o-mini"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
 
 
 class Settings(BaseSettings):
@@ -58,6 +73,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig
     jwt: JWTConfig
     llm: LLMConfig
+    embedding: EmbeddingConfig
     object_storage: ObjectStorageConfig
     cors_origins: list[str]
 

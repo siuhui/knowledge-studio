@@ -1,83 +1,78 @@
-"""Hybrid retrieval: pgvector semantic search + PostgreSQL full-text search, fused with RRF."""
+"""Hybrid retrieval: pgvector semantic search + PostgreSQL full-text search, fused with RRF.
+
+Both paths query Chunk directly (single table) — knowledge_base_id is denormalized
+on Chunk to avoid JOINs in the retrieval hot path.
+"""
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
-from app.models.document import Document
 
 
 def _vector_search(
     db: Session, *, query_embedding: list[float], knowledge_base_id: str, top_k: int
-) -> list[tuple[Chunk, Document, float]]:
-    """Cosine similarity search via pgvector."""
+) -> list[tuple[Chunk, float]]:
+    """Cosine similarity search via pgvector — single-table on Chunk."""
     rows = (
-        db.query(Chunk, Document, Chunk.embedding.cosine_distance(query_embedding).label("score"))
-        .join(Document, Chunk.doc_id == Document.id)
-        .filter(Document.knowledge_base_id == knowledge_base_id)
+        db.query(Chunk, Chunk.embedding.cosine_distance(query_embedding).label("score"))
+        .filter(Chunk.knowledge_base_id == knowledge_base_id)
         .filter(Chunk.embedding.is_not(None))
         .order_by("score")
         .limit(top_k * 2)
         .all()
     )
-    # cosine_distance returns a value; lower = more similar → convert to similarity score
-    results = []
-    for chunk, doc, dist in rows:
-        score = 1.0 - dist  # convert distance to similarity
-        results.append((chunk, doc, score))
-    return results
+    return [(chunk, 1.0 - dist) for chunk, dist in rows]  # distance → similarity
 
 
 def _keyword_search(
     db: Session, *, query: str, knowledge_base_id: str, top_k: int
-) -> list[tuple[Chunk, Document, float]]:
-    """PostgreSQL full-text search with ts_rank."""
+) -> list[tuple[Chunk, float]]:
+    """PostgreSQL full-text search — single-table on Chunk."""
     rows = (
         db.query(
             Chunk,
-            Document,
             func.ts_rank(
                 func.to_tsvector("english", Chunk.content),
                 func.plainto_tsquery("english", query),
             ).label("rank"),
         )
-        .join(Document, Chunk.doc_id == Document.id)
-        .filter(Document.knowledge_base_id == knowledge_base_id)
+        .filter(Chunk.knowledge_base_id == knowledge_base_id)
         .filter(func.to_tsvector("english", Chunk.content).match(query, postgresql_regconfig="english"))
         .order_by(text("rank DESC"))
         .limit(top_k * 2)
         .all()
     )
-    return [(chunk, doc, float(rank)) for chunk, doc, rank in rows]
+    return [(chunk, float(rank)) for chunk, rank in rows]
 
 
 def rrf_fusion(
-    vector_results: list[tuple[Chunk, Document, float]],
-    keyword_results: list[tuple[Chunk, Document, float]],
+    vector_results: list[tuple[Chunk, float]],
+    keyword_results: list[tuple[Chunk, float]],
     top_k: int = 10,
     k: int = 60,
-) -> list[tuple[Chunk, Document, float]]:
+) -> list[tuple[Chunk, float]]:
     """Reciprocal Rank Fusion: combines two ranked lists into one.
 
     RRF score = Σ 1 / (k + rank_i) for each result list i.
     k=60 is a common default that works well in practice.
     """
-    scores: dict[str, tuple[Chunk, Document, float]] = {}
+    scores: dict[str, tuple[Chunk, float]] = {}
 
-    for rank, (chunk, doc, _) in enumerate(vector_results):
+    for rank, (chunk, _) in enumerate(vector_results):
         rrf = 1.0 / (k + rank + 1)
-        scores[chunk.id] = (chunk, doc, rrf)
+        scores[chunk.id] = (chunk, rrf)
 
-    for rank, (chunk, doc, _) in enumerate(keyword_results):
+    for rank, (chunk, _) in enumerate(keyword_results):
         rrf = 1.0 / (k + rank + 1)
         if chunk.id in scores:
-            prev_chunk, prev_doc, prev_score = scores[chunk.id]
-            scores[chunk.id] = (prev_chunk, prev_doc, prev_score + rrf)
+            prev_chunk, prev_score = scores[chunk.id]
+            scores[chunk.id] = (prev_chunk, prev_score + rrf)
         else:
-            scores[chunk.id] = (chunk, doc, rrf)
+            scores[chunk.id] = (chunk, rrf)
 
     # Sort by RRF score descending
-    sorted_results = sorted(scores.values(), key=lambda x: x[2], reverse=True)
+    sorted_results = sorted(scores.values(), key=lambda x: x[1], reverse=True)
     return sorted_results[:top_k]
 
 
@@ -88,8 +83,8 @@ def hybrid_search(
     query_embedding: list[float],
     knowledge_base_id: str,
     top_k: int = 10,
-) -> list[tuple[Chunk, Document, float]]:
-    """Perform hybrid search and return fused results."""
+) -> list[tuple[Chunk, float]]:
+    """Perform hybrid search and return fused results (chunk, score)."""
     vector_results = _vector_search(
         db,
         query_embedding=query_embedding,

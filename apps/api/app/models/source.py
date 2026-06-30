@@ -15,7 +15,7 @@ class Source(Base):
     type: Mapped[str] = mapped_column(String(20), nullable=False, default="upload")  # upload | url | github
     config: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | active | error
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | active | invalid
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

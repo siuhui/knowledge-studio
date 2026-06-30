@@ -3,12 +3,21 @@
 import structlog
 from sqlalchemy.orm import Session
 
+from app.models.document import Document
 from app.schemas.retrieval.response import QaResponse, RetrievalChunk, RetrievalQueryResponse
 from app.services.retrieval.citation_builder import build_citations
 from app.services.retrieval.reranker import rerank
 from app.services.retrieval.retriever import hybrid_search
 
 logger = structlog.get_logger(__name__)
+
+
+def _batch_fetch_documents(db: Session, *, doc_ids: set[str]) -> dict[str, Document]:
+    """Fetch Document records by ID for citation/title enrichment."""
+    if not doc_ids:
+        return {}
+    docs = db.query(Document).filter(Document.id.in_(doc_ids)).all()
+    return {d.id: d for d in docs}
 
 
 class RetrievalService:
@@ -25,8 +34,8 @@ class RetrievalService:
 
         query_embedding = embedder.embed([query])[0]
 
-        # Hybrid search
-        results = hybrid_search(
+        # Hybrid search — single-table on Chunk (zero JOIN)
+        chunk_scores = hybrid_search(
             db,
             query=query,
             query_embedding=query_embedding,
@@ -34,20 +43,33 @@ class RetrievalService:
             top_k=top_k,
         )
 
-        # Re-rank
-        results = rerank(results)
+        if not chunk_scores:
+            return RetrievalQueryResponse(query=query, results=[])
 
-        # Build response
-        retrieval_chunks = [
-            RetrievalChunk(
-                chunk_id=chunk.id,
-                content=chunk.content,
-                score=score,
-                document_title=doc.title,
-                citation=build_citations([(chunk, doc, score)])[0],
+        # Re-rank
+        chunk_scores = rerank(chunk_scores)
+
+        # Batch-fetch documents for titles (top_k items, PK lookup)
+        doc_ids = {c.doc_id for c, _ in chunk_scores}
+        docs = _batch_fetch_documents(db, doc_ids=doc_ids)
+
+        # Build response with (Chunk, Document, score) for citations
+        results_with_docs = []
+        retrieval_chunks = []
+        for chunk, score in chunk_scores:
+            doc = docs.get(chunk.doc_id)
+            if doc is None:
+                continue
+            results_with_docs.append((chunk, doc, score))
+            retrieval_chunks.append(
+                RetrievalChunk(
+                    chunk_id=chunk.id,
+                    content=chunk.content,
+                    score=score,
+                    document_title=doc.title,
+                    citation=build_citations([(chunk, doc, score)])[0],
+                )
             )
-            for chunk, doc, score in results
-        ]
 
         logger.info(
             "retrieval completed",

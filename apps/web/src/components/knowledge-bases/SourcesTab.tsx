@@ -11,7 +11,7 @@ interface StatusBadgeProps {
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
   pending: "bg-amber-100 text-amber-700",
-  error: "bg-red-100 text-red-600",
+  invalid: "bg-red-100 text-red-600",
 };
 
 function StatusBadge({ status }: StatusBadgeProps) {

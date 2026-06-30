@@ -335,7 +335,7 @@ export function DocumentContentView({
     );
   }
 
-  const isActive = document.status === "active";
+  const isReady = document.status === "ready";
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -366,6 +366,21 @@ export function DocumentContentView({
         <div className="flex items-center gap-2 mb-1">
           <FormatBadge format={document.source_format} />
           <StatusBadge status={document.status} />
+          {document.chunk_status === "done" && (
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500 shrink-0">
+              Chunked
+            </span>
+          )}
+          {document.embed_status === "done" && (
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-500 shrink-0">
+              Embedded
+            </span>
+          )}
+          {document.embed_status === "running" && (
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-400 shrink-0 animate-pulse">
+              Embedding…
+            </span>
+          )}
           {/* Trash icon — only deletion entry point */}
           {onDeleteDocument && (
             <button
@@ -411,7 +426,7 @@ export function DocumentContentView({
       </div>
 
       {/* Body */}
-      {isActive && document.chunks.length > 0 ? (
+      {isReady && document.chunks.length > 0 ? (
         <ContentView document={document} />
       ) : (
         <ProcessingView document={document} />

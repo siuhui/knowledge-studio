@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Query
 from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
 from app.dependencies import CurrentUser, DbSession
+from app.models.status_enums import SourceStatus
 from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
 from app.schemas.document import DocumentItem
 from app.schemas.source import SourceCreate, SourceItem
@@ -129,13 +130,13 @@ def extract_source(
 ) -> ApiResponse[dict[str, object]]:
     """Re-extract a source: download from MinIO and re-run indexing pipeline.
 
-    Only active or error sources can be re-extracted. If the S3 object
-    is missing, the source is marked as error.
+    Only active or invalid sources can be re-extracted. If the S3 object
+    is missing, the source is marked as invalid.
     """
     source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
 
-    # Guard: source must be active or error to re-extract
-    if source.status not in ("active", "error"):
+    # Guard: source must be active or invalid to re-extract
+    if source.status not in (SourceStatus.ACTIVE, SourceStatus.INVALID):
         raise ValidationError(
             code=ResponseCode.SOURCE_STATUS_INVALID,
             message=f"Cannot re-extract source in '{source.status}' state",
@@ -152,17 +153,17 @@ def extract_source(
     try:
         ObjectStorageService.head_object(key=s3_key)
     except NotFoundError:
-        # mark_error creates its own session and commits — safe from the
+        # mark_invalid creates its own session and commits — safe from the
         # current transaction's rollback caused by the ValidationError below.
-        SourceService.mark_error(source_id=source_id)
+        SourceService.mark_invalid(source_id=source_id)
         logger.warning(
-            "source object not found, marked as error",
+            "source object not found, marked as invalid",
             source_id=source_id,
             s3_key=s3_key,
         )
         raise ValidationError(
             code=ResponseCode.UPLOAD_OBJECT_NOT_FOUND,
-            message="Source file no longer exists in storage. Source marked as error.",
+            message="Source file no longer exists in storage. Source marked as invalid.",
         )
 
     original_name = source.config.get("original_name", "unknown")

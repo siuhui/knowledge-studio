@@ -357,6 +357,8 @@ export default function WorkspacePage() {
           version: "v1",
           description: `${d.source_format} document`,
           status: d.status,
+          chunkStatus: d.chunk_status,
+          embedStatus: d.embed_status,
         })),
       };
     });
@@ -373,6 +375,8 @@ export default function WorkspacePage() {
       version: "v1",
       description: `${d.source_format} document`,
       status: d.status,
+      chunkStatus: d.chunk_status,
+      embedStatus: d.embed_status,
     }));
     return [...fromSources, ...orphans];
   }, [sourceNodes, orphanedDocuments]);
@@ -397,6 +401,8 @@ export default function WorkspacePage() {
         version: "v1",
         description: `${d.source_format} document`,
         status: d.status,
+        chunkStatus: d.chunk_status,
+        embedStatus: d.embed_status,
         createdAt: d.created_at,
       })),
     };
@@ -468,13 +474,13 @@ export default function WorkspacePage() {
   }, [loadSources]);
 
   // ── Smart polling: refresh while any docs are in a transitional state ──
-  // Terminal statuses: "active" | "error". Non-terminal: "processing" | "pending" | "parsed".
+  // Terminal statuses: "ready" | "failed". Non-terminal: "pending" | "processing".
   // Also polls when an active source has zero documents (pipeline hasn't created them yet).
   useEffect(() => {
     if (sourcesFirstLoad) return;
 
     const hasTransitionalDoc = Object.values(documentsBySource).some((docs) =>
-      docs.some((d) => d.status === "processing" || d.status === "pending" || d.status === "parsed"),
+      docs.some((d) => d.status === "pending" || d.status === "processing"),
     );
 
     const hasEmptyActiveSource = sources.some(

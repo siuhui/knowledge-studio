@@ -18,6 +18,7 @@ from app.config import settings
 from app.core.errors import ValidationError
 from app.core.response_codes import ResponseCode
 from app.dependencies import CurrentUser, DbSession
+from app.models.status_enums import SourceStatus
 from app.schemas.common import ApiResponse
 from app.schemas.upload import (
     PresignRequest,
@@ -75,7 +76,7 @@ def create_presign(
     source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
 
     # Only pending sources can receive uploads
-    if source.status != "pending":
+    if source.status != SourceStatus.PENDING:
         raise ValidationError(
             code=ResponseCode.SOURCE_STATUS_INVALID,
             message=f"Cannot upload to source in '{source.status}' state",
@@ -135,7 +136,7 @@ def complete_upload(
     source = SourceService.get_by_id(db, source_id=source_id, user_id=current_user.id)
 
     # Only pending sources can be completed
-    if source.status != "pending":
+    if source.status != SourceStatus.PENDING:
         raise ValidationError(
             code=ResponseCode.SOURCE_STATUS_INVALID,
             message=f"Source is already {source.status}",

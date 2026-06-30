@@ -23,6 +23,8 @@ export interface Document {
   title: string;
   source_format: string;
   status: string;
+  chunk_status: string | null;
+  embed_status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -42,6 +44,8 @@ export interface DocumentDetail {
   title: string;
   source_format: string;
   status: string;
+  chunk_status: string | null;
+  embed_status: string | null;
   created_at: string;
   updated_at: string;
   chunk_count: number;
@@ -74,6 +78,8 @@ export interface SourceDocument {
   version: string;
   description: string;
   status: string;
+  chunkStatus: string | null;
+  embedStatus: string | null;
 }
 
 /** Flattened document row for display.
@@ -87,6 +93,8 @@ export interface FlatDocument {
   version: string;
   description: string;
   status: string;
+  chunkStatus: string | null;
+  embedStatus: string | null;
 }
 
 export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
@@ -100,6 +108,8 @@ export function flattenDocs(sources: SourceNode[]): FlatDocument[] {
       version: d.version,
       description: d.description,
       status: d.status,
+      chunkStatus: d.chunkStatus,
+      embedStatus: d.embedStatus,
     })),
   );
 }

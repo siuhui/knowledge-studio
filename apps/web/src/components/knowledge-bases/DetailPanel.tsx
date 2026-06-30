@@ -12,6 +12,8 @@ export interface DetailSourceDocument {
   version: string;
   description: string;
   status: string;
+  chunkStatus: string | null;
+  embedStatus: string | null;
   createdAt: string;
 }
 

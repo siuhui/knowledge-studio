@@ -13,6 +13,10 @@ class ChunkRepository:
         return db.query(Chunk).filter(Chunk.doc_id == document_id).order_by(Chunk.chunk_index).all()
 
     @staticmethod
+    def count_by_document(db: Session, *, document_id: str) -> int:
+        return db.query(Chunk).filter(Chunk.doc_id == document_id).count()
+
+    @staticmethod
     def save_batch(db: Session, *, chunks: list[Chunk]) -> list[Chunk]:
         db.add_all(chunks)
         db.flush()

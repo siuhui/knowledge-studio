@@ -14,8 +14,8 @@ def test_retrieval_query_empty_kb(client: TestClient, auth_headers: dict):
     kb_id = create_resp.json()["data"]["id"]
 
     # Mock the embedder — this test exercises the search path without
-    # calling the real OpenAI API.
-    with patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1536]):
+    # calling the real embedding API.
+    with patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]):
         response = client.post(
             "/api/v1/retrieval/query",
             json={"query": "test query", "knowledge_base_id": kb_id, "top_k": 5},

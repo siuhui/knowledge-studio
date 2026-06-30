@@ -9,8 +9,15 @@ class DocumentRepository:
         return db.get(Document, document_id)
 
     @staticmethod
-    def get_by_text_hash(db: Session, *, text_hash: str) -> Document | None:
-        return db.query(Document).filter(Document.text_hash == text_hash).first()
+    def get_by_text_hash(db: Session, *, text_hash: str, knowledge_base_id: str) -> Document | None:
+        return (
+            db.query(Document)
+            .filter(
+                Document.text_hash == text_hash,
+                Document.knowledge_base_id == knowledge_base_id,
+            )
+            .first()
+        )
 
     @staticmethod
     def list_by_source(db: Session, *, source_id: str, offset: int = 0, limit: int = 20) -> tuple[list[Document], int]:

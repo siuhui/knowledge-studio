@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
 from app.models.source import Source
+from app.models.status_enums import SourceStatus
 from app.repositories.source_repository import SourceRepository
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.object_storage import ObjectStorageService
@@ -59,28 +60,31 @@ class SourceService:
                 code=ResponseCode.SOURCE_NOT_FOUND,
                 message=f"Source {source_id} not found",
             )
-        if source.status != "pending":
+        if source.status != SourceStatus.PENDING:
             raise ValidationError(
                 code=ResponseCode.SOURCE_STATUS_INVALID,
                 message=f"Cannot complete upload: source is already {source.status}",
             )
         source.config = config
-        source.status = "active"
+        source.status = SourceStatus.ACTIVE
         SourceRepository.save(db, source=source)
         logger.info("source activated", source_id=source_id)
         return source
 
     @staticmethod
-    def mark_error(*, source_id: str) -> None:
-        """Mark a source as error. Creates its own DB session — safe for background tasks."""
+    def mark_invalid(*, source_id: str) -> None:
+        """Mark a source as invalid (config stale or resource unreachable).
+
+        Creates its own DB session — safe for background tasks.
+        """
         from app.database import SessionLocal
 
         with SessionLocal() as db:
             with db.begin():
                 source = db.get(Source, source_id)
-                if source and source.status != "error":
-                    source.status = "error"
-                    logger.info("source marked as error", source_id=source_id)
+                if source and source.status != SourceStatus.INVALID:
+                    source.status = SourceStatus.INVALID
+                    logger.info("source marked as invalid", source_id=source_id)
 
     @staticmethod
     def get_by_id(db: Session, *, source_id: str, user_id: str) -> Source:

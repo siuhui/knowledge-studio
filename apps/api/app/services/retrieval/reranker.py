@@ -5,11 +5,10 @@ v0.2.0+: could use cross-encoder or LLM-based re-ranking.
 """
 
 from app.models.chunk import Chunk
-from app.models.document import Document
 
 
 def rerank(
-    results: list[tuple[Chunk, Document, float]],
-) -> list[tuple[Chunk, Document, float]]:
+    results: list[tuple[Chunk, float]],
+) -> list[tuple[Chunk, float]]:
     """Re-rank search results. Currently a pass-through."""
     return results

@@ -22,9 +22,9 @@ class Document(Base):
     source_format: Mapped[str] = mapped_column(String(50), nullable=False)  # pdf | markdown | text
     full_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    # processing | parsed | active | error
+    # pending | ready | failed   (content lifecycle — does NOT track chunk/embed state)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="processing"
+        String(20), nullable=False, default="pending"
     )
     doc_version: Mapped[str] = mapped_column(String(32), default="1")
     created_at: Mapped[datetime] = mapped_column(
@@ -40,9 +40,30 @@ class Document(Base):
     )
 
     source = relationship("Source", back_populates="documents")
+    index_status = relationship(
+        "DocumentIndexStatus",
+        back_populates="document",
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
     chunks = relationship(
         "Chunk",
         back_populates="document",
         lazy="selectin",
         cascade="all, delete-orphan",
     )
+
+    # ── Properties for API serialization (backed by index_status relationship) ──
+
+    @property
+    def chunk_status(self) -> str | None:
+        if self.index_status is None:
+            return None
+        return self.index_status.chunk_status
+
+    @property
+    def embed_status(self) -> str | None:
+        if self.index_status is None:
+            return None
+        return self.index_status.embed_status

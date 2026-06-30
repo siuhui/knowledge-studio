@@ -9,6 +9,8 @@ class DocumentItem(BaseModel):
     title: str
     source_format: str
     status: str
+    chunk_status: str | None = None
+    embed_status: str | None = None
     created_at: datetime
     updated_at: datetime
 
