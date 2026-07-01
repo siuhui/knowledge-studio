@@ -15,9 +15,10 @@ from app.services.knowledge_base import KnowledgeBaseService
 logger = structlog.get_logger(__name__)
 
 _MAX_TITLE_LENGTH = 60
+DEFAULT_SESSION_TITLE = "New Chat"
 
 
-def _auto_title(query: str) -> str:
+def auto_title(query: str) -> str:
     """Derive session title from first user query."""
     cleaned = re.sub(r"\s+", " ", query.strip())
     if len(cleaned) <= _MAX_TITLE_LENGTH:
@@ -32,7 +33,7 @@ class SessionService:
         *,
         kb_id: str,
         user_id: str,
-        title: str = "New Chat",
+        title: str = DEFAULT_SESSION_TITLE,
         reference_document_ids: list[str] | None = None,
     ) -> ChatSession:
         # Verify KB ownership
@@ -159,8 +160,8 @@ class SessionService:
         session.last_message_at = now
 
         # Auto-name session if title is still default
-        if session.title == "New Chat":
-            session.title = _auto_title(query)
+        if session.title == DEFAULT_SESSION_TITLE:
+            session.title = auto_title(query)
 
         SessionRepository.save(db, session=session)
 

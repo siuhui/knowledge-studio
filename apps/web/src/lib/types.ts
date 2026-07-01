@@ -224,6 +224,15 @@ export interface UploadCompleteResponse {
   size_bytes: number;
 }
 
+// ── Streaming events ──
+
+export type StreamEvent =
+  | { type: "session"; session_id: string; user_msg_id: string }
+  | { type: "token"; text: string }
+  | { type: "citation"; citations: Citation[] }
+  | { type: "done"; persisted: boolean; ai_message_id?: string }
+  | { type: "error"; message: string };
+
 export class ApiError extends Error {
   code: string;
   status: number;

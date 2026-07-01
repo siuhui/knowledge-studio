@@ -35,6 +35,11 @@ def get_db() -> Generator[Session, None, None]:
 # "non-default argument follows default argument" ordering rule.
 DbSession = Annotated[Session, Depends(get_db, scope="function")]
 
+# DbSessionStreaming: request-scoped DB session that stays alive for the full
+# response lifecycle.  Required for StreamingResponse endpoints — scope="function"
+# would commit+close when the endpoint returns, before the body generator runs.
+DbSessionStreaming = Annotated[Session, Depends(get_db)]
+
 
 def get_current_user(
     db: DbSession,

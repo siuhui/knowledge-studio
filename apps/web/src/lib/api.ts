@@ -164,6 +164,37 @@ export async function sendMessage(
   return result.data;
 }
 
+export async function sendMessageStream(
+  kbId: string,
+  content: string,
+  sessionId?: string | null,
+  referenceDocumentIds?: string[] | null,
+  signal?: AbortSignal,
+): Promise<{ stream: ReadableStream<Uint8Array> | null; requestId: string }> {
+  const requestId = crypto.randomUUID();
+  const res = await fetch(`${BASE_URL}/api/v1/chat/messages/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Request-ID": requestId,
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({
+      knowledge_base_id: kbId,
+      session_id: sessionId ?? null,
+      content,
+      reference_document_ids: referenceDocumentIds,
+    }),
+    signal,
+  });
+  const rid = res.headers.get("X-Request-ID") || requestId;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
+    throw new ApiError(err.code, err.message, res.status, rid);
+  }
+  return { stream: res.body, requestId: rid };
+}
+
 export async function listSessions(
   kbId: string,
   page = 1,

@@ -1,7 +1,10 @@
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 from app.core.response_codes import ResponseCode
-from app.dependencies import CurrentUser, DbSession
+from app.dependencies import CurrentUser, DbSession, DbSessionStreaming
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.common import ApiResponse
 from app.services.chat import ChatService
@@ -24,3 +27,51 @@ def send_message(
         reference_document_ids=payload.reference_document_ids,
     )
     return ApiResponse[ChatResponse](code=ResponseCode.OK, message="success", data=result)
+
+
+@router.post("/api/v1/chat/messages/stream")
+async def send_message_stream(
+    db: DbSessionStreaming,
+    current_user: CurrentUser,
+    payload: ChatRequest,
+) -> StreamingResponse:
+    """Stream chat response as SSE events.
+
+    Event types returned (each as a JSON object in the ``data:`` field):
+
+    - ``session`` — session_id, user_msg_id (sent first)
+    - ``token``   — text chunk from the LLM (one or more)
+    - ``citation``— deduplicated source citations
+    - ``done``    — persisted flag + ai_message_id
+    - ``error``   — error message (optional, sent before ``done``)
+    """
+
+    # Extract user_id before entering the async generator — the current_user
+    # ORM instance will be detached once the request-scoped DB session closes.
+    # Nb. DbSessionStreaming (scope="request") keeps the session alive for the
+    # full response lifecycle, including StreamingResponse body consumption.
+    user_id = current_user.id
+
+    async def event_generator() -> AsyncIterator[str]:
+        async for event_json in ChatService.stream_message(
+            db,
+            kb_id=payload.knowledge_base_id,
+            user_id=user_id,
+            session_id=payload.session_id,
+            content=payload.content,
+            reference_document_ids=payload.reference_document_ids,
+        ):
+            yield f"data: {event_json}\n\n"
+
+        # Extra newline signals end-of-stream per SSE spec
+        yield "\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )

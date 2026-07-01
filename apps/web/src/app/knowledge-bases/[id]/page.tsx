@@ -12,12 +12,13 @@ import {
   listSourceDocuments,
   listKnowledgeBaseDocuments,
   getDocumentChunks,
-  sendMessage,
+  sendMessageStream,
   listSessions,
   getSession,
   renameSession,
   deleteSession,
 } from "@/lib/api";
+import { parseSSEStream } from "@/lib/sse";
 import { useToast } from "@/hooks/useToast";
 import { usePanelResize } from "@/hooks/usePanelResize";
 import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
@@ -27,7 +28,6 @@ import { SessionBar } from "@/components/knowledge-bases/SessionBar";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { flattenDocs } from "@/lib/types";
 import type {
-  ChatResponse,
   Citation,
   Document,
   DocumentDetail,
@@ -37,6 +37,7 @@ import type {
   SessionItem,
   Source,
   SourceNode,
+  StreamEvent,
 } from "@/lib/types";
 import type { DetailSourceDetail } from "@/components/knowledge-bases/DetailPanel";
 
@@ -56,7 +57,7 @@ interface ChatAreaProps {
   isDragging: boolean;
   hasMessages: boolean;
   messages: ChatMessage[];
-  thinking: boolean;
+  chatStatus: "idle" | "thinking" | "streaming" | "error";
   hasDocs: boolean;
   input: string;
   checkedDocIds: Set<string>;
@@ -65,6 +66,7 @@ interface ChatAreaProps {
   onInputChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
+  onStop: () => void;
   width?: number;
   sessionBar?: React.ReactNode;
 }
@@ -74,7 +76,7 @@ function ChatArea({
   isDragging,
   hasMessages,
   messages,
-  thinking,
+  chatStatus,
   hasDocs,
   input,
   checkedDocIds,
@@ -83,10 +85,12 @@ function ChatArea({
   onInputChange,
   onKeyDown,
   onSend,
+  onStop,
   width,
   sessionBar,
 }: ChatAreaProps) {
   const isMaximized = panelMode === "maximized";
+  const isBusy = chatStatus === "thinking" || chatStatus === "streaming";
 
   return (
     <div
@@ -102,7 +106,7 @@ function ChatArea({
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
-            {thinking && (
+            {chatStatus === "thinking" && (
               <div className={`flex items-center gap-3 ${isMaximized ? "px-2 py-3" : "px-6 py-4"}`}>
                 <div
                   className={`rounded-full bg-[#1A1A1A] flex items-center justify-center shrink-0 ${
@@ -169,32 +173,54 @@ function ChatArea({
                     : "No documents selected"
                   : `${checkedDocIds.size} document${checkedDocIds.size === 1 ? "" : "s"} in context`}
               </span>
-              <button
-                type="button"
-                onClick={onSend}
-                disabled={input.trim().length === 0 || thinking}
-                className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
-                  transition-all duration-200
-                  disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed ${
-                    isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
-                  }`}
-                aria-label="Send message"
-              >
-                <svg
-                  width={isMaximized ? 11 : 14}
-                  height={isMaximized ? 11 : 14}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              {chatStatus === "streaming" ? (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
+                    transition-all duration-200 ${
+                      isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
+                    }`}
+                  aria-label="Stop generating"
                 >
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-              </button>
+                  <svg
+                    width={isMaximized ? 9 : 11}
+                    height={isMaximized ? 9 : 11}
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onSend}
+                  disabled={input.trim().length === 0 || isBusy}
+                  className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
+                    transition-all duration-200
+                    disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed ${
+                      isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
+                    }`}
+                  aria-label="Send message"
+                >
+                  <svg
+                    width={isMaximized ? 11 : 14}
+                    height={isMaximized ? 11 : 14}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="22" y1="2" x2="11" y2="13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
           {!isMaximized && (
@@ -350,7 +376,9 @@ export default function WorkspacePage() {
   // Chat
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
+  const [chatStatus, setChatStatus] = useState<"idle" | "thinking" | "streaming" | "error">("idle");
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const streamingMsgIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -560,9 +588,21 @@ export default function WorkspacePage() {
   }, [sourcesFirstLoad, documents, activeSessionId]);
 
   // ── Auto-scroll chat ──
-  // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers scroll
+  const isNearBottomRef = useRef(true);
+
   useEffect(() => {
-    if (scrollRef.current) {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages changes trigger scroll on tokens
+  useEffect(() => {
+    if (scrollRef.current && isNearBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -908,10 +948,9 @@ export default function WorkspacePage() {
     }
   }, [deleteDocumentId, documentTitleToDelete, addToast, loadSources]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: checkedDocIds/documents are snapshot deps
   const handleSend = useCallback(async () => {
     const query = input.trim();
-    if (!query || thinking) return;
+    if (!query || chatStatus === "thinking" || chatStatus === "streaming") return;
 
     const userMsgId = crypto.randomUUID();
     const userMsg: ChatMessage = {
@@ -923,42 +962,121 @@ export default function WorkspacePage() {
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
-    setThinking(true);
+    setChatStatus("thinking");
+    isNearBottomRef.current = true;
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
-      // First message carries doc scope to seed the session; subsequent messages read from session.
       const docScope = checkedDocIds.size === documents.length ? null : Array.from(checkedDocIds);
-      const result = activeSessionId
-        ? await sendMessage(kbId, query, activeSessionId)
-        : await sendMessage(kbId, query, null, docScope);
+      const { stream } = activeSessionId
+        ? await sendMessageStream(kbId, query, activeSessionId, null, controller.signal)
+        : await sendMessageStream(kbId, query, null, docScope, controller.signal);
 
-      // If session was auto-created, update state
-      if (!activeSessionId) {
-        setActiveSessionId(result.session_id);
-        router.replace(`/knowledge-bases/${kbId}?session=${result.session_id}`, { scroll: false });
-        loadSessions();
+      if (!stream) throw new Error("No response body");
+
+      let accumulated = "";
+      let sessionEventFired = false;
+
+      setChatStatus("streaming");
+
+      await parseSSEStream(
+        stream,
+        (event: StreamEvent) => {
+          switch (event.type) {
+            case "session": {
+              if (!activeSessionId) {
+                setActiveSessionId(event.session_id);
+                router.replace(
+                  `/knowledge-bases/${kbId}?session=${event.session_id}`,
+                  { scroll: false },
+                );
+                loadSessions();
+              }
+              // Create placeholder AI message
+              const tempId = crypto.randomUUID();
+              streamingMsgIdRef.current = tempId;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: tempId,
+                  role: "assistant",
+                  content: "",
+                  createdAt: new Date().toISOString(),
+                },
+              ]);
+              sessionEventFired = true;
+              break;
+            }
+            case "token":
+              accumulated += event.text;
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (
+                  last?.role === "assistant" &&
+                  (last.id === streamingMsgIdRef.current || !sessionEventFired)
+                ) {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { ...last, content: accumulated };
+                  return updated;
+                }
+                return prev;
+              });
+              break;
+            case "citation":
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last?.role === "assistant") {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { ...last, citations: event.citations };
+                  return updated;
+                }
+                return prev;
+              });
+              break;
+            case "done":
+              if (!event.persisted) {
+                addToast("error", "Conversation couldn't be saved");
+              }
+              setChatStatus("idle");
+              break;
+            case "error":
+              addToast("error", event.message);
+              setChatStatus("error");
+              break;
+          }
+        },
+        controller.signal,
+      );
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User cancelled — keep partial content
+        setChatStatus("idle");
+        return;
       }
-
-      const aiMsg: ChatMessage = {
-        id: result.message_id || crypto.randomUUID(),
-        role: "assistant",
-        content: result.answer,
-        citations: result.citations,
-        createdAt: new Date().toISOString(),
-      };
-
-      setMessages((prev) => [...prev, aiMsg]);
-
-      if (!result.persisted) {
-        addToast("error", "Conversation couldn't be saved");
-      }
-    } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to get answer";
       addToast("error", msg);
+      setChatStatus("error");
     } finally {
-      setThinking(false);
+      abortControllerRef.current = null;
+      streamingMsgIdRef.current = null;
     }
-  }, [input, thinking, kbId, activeSessionId, addToast, router, loadSessions]);
+  }, [
+    input,
+    chatStatus,
+    kbId,
+    activeSessionId,
+    addToast,
+    router,
+    loadSessions,
+    checkedDocIds,
+    documents,
+  ]);
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1029,7 +1147,7 @@ export default function WorkspacePage() {
             isDragging={isDragging}
             hasMessages={hasMessages}
             messages={messages}
-            thinking={thinking}
+            chatStatus={chatStatus}
             hasDocs={hasDocs}
             input={input}
             checkedDocIds={checkedDocIds}
@@ -1038,6 +1156,7 @@ export default function WorkspacePage() {
             onInputChange={handleInputChange}
             onKeyDown={handleKeyDown}
             onSend={handleSend}
+            onStop={handleStop}
             sessionBar={
               <SessionBar
                 sessions={sessions}
@@ -1122,7 +1241,7 @@ export default function WorkspacePage() {
             isDragging={isDragging}
             hasMessages={hasMessages}
             messages={messages}
-            thinking={thinking}
+            chatStatus={chatStatus}
             hasDocs={hasDocs}
             input={input}
             checkedDocIds={checkedDocIds}
@@ -1131,6 +1250,7 @@ export default function WorkspacePage() {
             onInputChange={handleInputChange}
             onKeyDown={handleKeyDown}
             onSend={handleSend}
+            onStop={handleStop}
             width={chatSidebarWidth}
             sessionBar={
               <SessionBar
