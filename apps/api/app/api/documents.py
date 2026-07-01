@@ -17,9 +17,7 @@ def get_document(
     current_user: CurrentUser,
     document_id: str,
 ) -> ApiResponse[dict[str, Any]]:
-    document = DocumentService.get_by_id(
-        db, document_id=document_id, user_id=current_user.id
-    )
+    document = DocumentService.get_by_id(db, document_id=document_id, user_id=current_user.id)
     return ApiResponse[dict[str, Any]](
         code=ResponseCode.OK,
         message="success",
@@ -42,9 +40,7 @@ def get_document_chunks(
     start_char / end_char / metadata are reserved for future citation→location
     jumping and return null in v1.
     """
-    result = DocumentService.get_chunks(
-        db, document_id=document_id, user_id=current_user.id
-    )
+    result = DocumentService.get_chunks(db, document_id=document_id, user_id=current_user.id)
     return ApiResponse[dict[str, Any]](
         code=ResponseCode.OK,
         message="success",
@@ -63,7 +59,5 @@ def delete_document(
     current_user: CurrentUser,
     document_id: str,
 ) -> ApiResponse[None]:
-    DocumentService.delete(
-        db, document_id=document_id, user_id=current_user.id
-    )
+    DocumentService.delete(db, document_id=document_id, user_id=current_user.id)
     return ApiResponse[None](code=ResponseCode.OK, message="Document deleted", data=None)

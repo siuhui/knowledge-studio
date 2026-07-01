@@ -18,6 +18,7 @@ interface LeftSidebarProps {
   sourcesFirstLoad: boolean;
   sourcesError: string;
   onToggleDocument: (docId: string) => void;
+  onToggleAll?: (selectAll: boolean) => void;
   onAddSource: () => void;
   onSelectSource: (sourceId: string) => void;
   onSelectDocument: (documentId: string) => void;
@@ -35,6 +36,7 @@ export function LeftSidebar({
   sourcesFirstLoad,
   sourcesError,
   onToggleDocument,
+  onToggleAll,
   onAddSource,
   onSelectSource,
   onSelectDocument,
@@ -136,6 +138,7 @@ export function LeftSidebar({
           documents={documents}
           checkedDocIds={checkedDocIds}
           onToggleDocument={onToggleDocument}
+          onToggleAll={onToggleAll}
           onSelectDocument={onSelectDocument}
           onTraceSource={handleTraceSource}
         />

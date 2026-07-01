@@ -316,9 +316,7 @@ def _mark_index_failed(*, document_id: str | None, stage: str, error_message: st
 
     with SessionLocal() as fail_db:
         with fail_db.begin():
-            status = fail_db.query(DocumentIndexStatus).filter(
-                DocumentIndexStatus.document_id == document_id
-            ).first()
+            status = fail_db.query(DocumentIndexStatus).filter(DocumentIndexStatus.document_id == document_id).first()
             if status is None:
                 status = DocumentIndexStatus(document_id=document_id)
                 fail_db.add(status)

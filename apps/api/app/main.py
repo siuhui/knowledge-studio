@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import auth, documents, health, knowledge_bases, retrieval, sources, uploads
+from app.api import auth, chat, documents, health, knowledge_bases, retrieval, sessions, sources, uploads
 from app.config import settings
 from app.core.errors import AppError
 from app.core.exceptions import app_error_handler, general_exception_handler
@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Ensure pgvector extension
         with engine.connect() as conn:
             conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {settings.database.pg_vector_extension}"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunk_doc_id ON chunk(doc_id)"))
             conn.commit()
         Base.metadata.create_all(bind=engine)
         logger.info("tables created", auto_create_tables=True)
@@ -64,3 +65,5 @@ app.include_router(sources.router)
 app.include_router(documents.router)
 app.include_router(uploads.router)
 app.include_router(retrieval.router)
+app.include_router(chat.router)
+app.include_router(sessions.router)

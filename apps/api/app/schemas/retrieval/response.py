@@ -14,9 +14,3 @@ class RetrievalChunk(BaseModel):
 class RetrievalQueryResponse(BaseModel):
     query: str
     results: list[RetrievalChunk]
-
-
-class QaResponse(BaseModel):
-    query: str
-    answer: str
-    sources: list[Citation]

@@ -183,8 +183,8 @@ function ContentView({ document }: { document: DocumentDetail }) {
       {document.truncated && (
         <div className="px-5 pb-3">
           <p className="text-[10px] text-amber-600 bg-amber-50 rounded-lg px-2.5 py-1.5 border border-amber-100">
-            Showing first {document.chunks.length} of {document.chunk_count} sections. Large documents
-            are truncated for performance.
+            Showing first {document.chunks.length} of {document.chunk_count} sections. Large
+            documents are truncated for performance.
           </p>
         </div>
       )}

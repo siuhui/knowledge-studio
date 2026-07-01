@@ -13,7 +13,7 @@ class Chunk(Base):
     __tablename__ = "chunk"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    doc_id: Mapped[str] = mapped_column(String(36), ForeignKey("document.id"), nullable=False)
+    doc_id: Mapped[str] = mapped_column(String(36), ForeignKey("document.id"), nullable=False, index=True)
     knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     chunk_index: Mapped[int] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)

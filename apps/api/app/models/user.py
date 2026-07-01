@@ -26,3 +26,4 @@ class User(Base):
     )
 
     knowledge_bases = relationship("KnowledgeBase", back_populates="owner", lazy="selectin")
+    chat_sessions = relationship("ChatSession", back_populates="owner", lazy="selectin")

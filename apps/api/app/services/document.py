@@ -54,9 +54,7 @@ class DocumentService:
         limit: int = 50,
     ) -> tuple[list["Document"], int]:
         """List all documents for a knowledge base, including orphaned ones."""
-        KnowledgeBaseService.get_by_id(
-            db, knowledge_base_id=knowledge_base_id, user_id=user_id
-        )
+        KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
         return DocumentRepository.list_by_knowledge_base(
             db, knowledge_base_id=knowledge_base_id, offset=offset, limit=limit
         )
@@ -72,9 +70,7 @@ class DocumentService:
     ) -> tuple[list["Document"], int]:
         """List documents for a source with ownership verification."""
         SourceService.get_by_id(db, source_id=source_id, user_id=user_id)
-        return DocumentRepository.list_by_source(
-            db, source_id=source_id, offset=offset, limit=limit
-        )
+        return DocumentRepository.list_by_source(db, source_id=source_id, offset=offset, limit=limit)
 
     @staticmethod
     def get_chunks(db: Session, *, document_id: str, user_id: str) -> dict:
@@ -84,9 +80,7 @@ class DocumentService:
         document reader.  Truncates at MAX_DOCUMENT_DETAIL_CHUNKS to bound
         response size.
         """
-        document = DocumentService.get_by_id(
-            db, document_id=document_id, user_id=user_id
-        )
+        document = DocumentService.get_by_id(db, document_id=document_id, user_id=user_id)
         all_chunks = ChunkRepository.list_by_document(db, document_id=document_id)
 
         truncated = len(all_chunks) > MAX_DOCUMENT_DETAIL_CHUNKS
@@ -102,8 +96,6 @@ class DocumentService:
     @staticmethod
     def delete(db: Session, *, document_id: str, user_id: str) -> None:
         """Delete a document and its chunks (cascade)."""
-        document = DocumentService.get_by_id(
-            db, document_id=document_id, user_id=user_id
-        )
+        document = DocumentService.get_by_id(db, document_id=document_id, user_id=user_id)
         DocumentRepository.delete(db, document=document)
         logger.info("document deleted", document_id=document_id)

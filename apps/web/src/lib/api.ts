@@ -1,9 +1,12 @@
 import {
   ApiError,
+  type ChatResponse,
   type Document,
   type DocumentDetail,
   type PaginatedMeta,
   type PresignResponse,
+  type SessionDetail,
+  type SessionItem,
   type UploadCompleteRequest,
   type UploadCompleteResponse,
 } from "./types";
@@ -139,4 +142,57 @@ export async function uploadToPresignedUrl(
     const text = await res.text().catch(() => "Unknown error");
     throw new ApiError("UPLOAD_FAILED", `Upload failed (${res.status}): ${text}`, res.status, "");
   }
+}
+
+// ── Chat & Session helpers ──
+
+export async function sendMessage(
+  kbId: string,
+  content: string,
+  sessionId?: string | null,
+  referenceDocumentIds?: string[] | null,
+): Promise<ChatResponse> {
+  const result = await api<ChatResponse>("/api/v1/chat/messages", {
+    method: "POST",
+    body: JSON.stringify({
+      knowledge_base_id: kbId,
+      session_id: sessionId ?? null,
+      content,
+      reference_document_ids: referenceDocumentIds,
+    }),
+  });
+  return result.data;
+}
+
+export async function listSessions(
+  kbId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{ data: SessionItem[]; meta: PaginatedMeta }> {
+  return apiPaginated<SessionItem>(
+    `/api/v1/knowledge-bases/${kbId}/sessions?page=${page}&page_size=${pageSize}`,
+  );
+}
+
+export async function getSession(kbId: string, sessionId: string): Promise<SessionDetail> {
+  const result = await api<SessionDetail>(`/api/v1/knowledge-bases/${kbId}/sessions/${sessionId}`);
+  return result.data;
+}
+
+export async function renameSession(
+  kbId: string,
+  sessionId: string,
+  title: string,
+): Promise<SessionItem> {
+  const result = await api<SessionItem>(`/api/v1/knowledge-bases/${kbId}/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
+  });
+  return result.data;
+}
+
+export async function deleteSession(kbId: string, sessionId: string): Promise<void> {
+  await api(`/api/v1/knowledge-bases/${kbId}/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
 }

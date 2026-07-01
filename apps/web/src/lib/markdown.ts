@@ -24,10 +24,7 @@
  */
 export function renderMarkdown(text: string): string {
   // Step 1: Escape HTML to prevent XSS
-  const safeText = text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   // Step 2: Process block-level elements first (headings), then join with <br> to preserve
   // line breaks in HTML (newlines collapse to whitespace without explicit <br> tags).

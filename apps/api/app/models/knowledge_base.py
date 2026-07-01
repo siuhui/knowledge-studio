@@ -33,3 +33,9 @@ class KnowledgeBase(Base):
         lazy="selectin",
         cascade="all, delete-orphan",
     )
+    chat_sessions = relationship(
+        "ChatSession",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )

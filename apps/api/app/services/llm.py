@@ -17,7 +17,7 @@ logger = structlog.get_logger(__name__)
 
 
 class LLMProvider(Protocol):
-    def answer(self, *, query: str, context: str) -> str: ...
+    def generate(self, *, system_prompt: str, messages: list[dict[str, str]]) -> str: ...
 
 
 class OpenAIProvider:
@@ -25,7 +25,7 @@ class OpenAIProvider:
         self._model = settings.llm.chat_model
         self._client: OpenAI | None = None  # Lazy init
 
-    def answer(self, *, query: str, context: str) -> str:
+    def generate(self, *, system_prompt: str, messages: list[dict[str, str]]) -> str:
         if self._client is None:
             from openai import OpenAI
 
@@ -34,18 +34,10 @@ class OpenAIProvider:
                 base_url=settings.llm.base_url or None,
             )
 
-        system_prompt = (
-            "You are a helpful assistant that answers questions based solely on the provided context. "
-            "If the context doesn't contain enough information, say so. "
-            "Always cite the source document when using information from the context."
-        )
-
+        full_messages = [{"role": "system", "content": system_prompt}, *messages]
         response = self._client.chat.completions.create(
             model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
-            ],
+            messages=full_messages,  # type: ignore[arg-type]
             temperature=0.3,
         )
         return response.choices[0].message.content or ""
@@ -56,7 +48,7 @@ class AnthropicProvider:
         self._model = settings.llm.chat_model
         self._client: Anthropic | None = None  # Lazy init
 
-    def answer(self, *, query: str, context: str) -> str:
+    def generate(self, *, system_prompt: str, messages: list[dict[str, str]]) -> str:
         if self._client is None:
             from anthropic import Anthropic
 
@@ -64,19 +56,11 @@ class AnthropicProvider:
                 api_key=settings.llm.api_key.get_secret_value(),
             )
 
-        system_prompt = (
-            "You are a helpful assistant that answers questions based solely on the provided context. "
-            "If the context doesn't contain enough information, say so. "
-            "Always cite the source document when using information from the context."
-        )
-
         response = self._client.messages.create(
             model=self._model,
             max_tokens=1024,
             system=system_prompt,
-            messages=[
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
-            ],
+            messages=messages,  # type: ignore[arg-type]
         )
         return str(response.content[0].text)  # type: ignore[union-attr]
 

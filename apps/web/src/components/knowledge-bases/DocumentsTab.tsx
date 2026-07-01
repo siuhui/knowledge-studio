@@ -138,6 +138,56 @@ interface DocumentsTabProps {
   onSelectDocument?: (documentId: string) => void;
   /** Called when user clicks the source trace link — switches to Sources tab + selects source */
   onTraceSource?: (sourceId: string) => void;
+  /** Called to toggle all documents (select-all checkbox) */
+  onToggleAll?: (selectAll: boolean) => void;
+}
+
+function SelectAllCheckbox({
+  checked,
+}: {
+  checked: boolean | "indeterminate";
+}) {
+  const isChecked = checked === true;
+  const isIndeterminate = checked === "indeterminate";
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`shrink-0 w-4 h-4 rounded border transition-all duration-200 flex items-center justify-center ${
+        isChecked || isIndeterminate ? "bg-[#1A1A1A] border-[#1A1A1A]" : "border-gray-300 bg-white"
+      }`}
+    >
+      {isChecked && (
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="white"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      )}
+      {isIndeterminate && (
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="white"
+          strokeWidth="3"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      )}
+    </span>
+  );
 }
 
 export function DocumentsTab({
@@ -146,12 +196,18 @@ export function DocumentsTab({
   onToggleDocument,
   onSelectDocument,
   onTraceSource,
+  onToggleAll,
 }: DocumentsTabProps) {
   const [search, setSearch] = useState("");
 
   const filtered = search.trim()
     ? documents.filter((d) => d.title.toLowerCase().includes(search.toLowerCase()))
     : documents;
+
+  const allSelectableIds = filtered.map((d) => d.id);
+  const checkedCount = allSelectableIds.filter((id) => checkedDocIds.has(id)).length;
+  const selectAllState: boolean | "indeterminate" =
+    checkedCount === 0 ? false : checkedCount === allSelectableIds.length ? true : "indeterminate";
 
   return (
     <>
@@ -173,6 +229,24 @@ export function DocumentsTab({
                 transition-all duration-200"
             />
           </div>
+        </div>
+      )}
+
+      {/* Select all row */}
+      {documents.length > 0 && (
+        <div className="px-3 pb-2">
+          <button
+            type="button"
+            onClick={() => onToggleAll?.(selectAllState !== true)}
+            className="flex items-center gap-2.5 w-full rounded-lg px-2.5 py-1.5
+              hover:bg-white/60 transition-colors duration-150"
+          >
+            <SelectAllCheckbox checked={selectAllState} />
+            <span className="text-[11px] font-medium text-gray-500">Select all</span>
+            <span className="text-[10px] text-gray-300 ml-auto">
+              {checkedCount}/{allSelectableIds.length}
+            </span>
+          </button>
         </div>
       )}
 

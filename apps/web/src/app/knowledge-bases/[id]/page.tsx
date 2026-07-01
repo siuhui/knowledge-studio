@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   api,
   apiPaginated,
@@ -12,22 +12,29 @@ import {
   listSourceDocuments,
   listKnowledgeBaseDocuments,
   getDocumentChunks,
+  sendMessage,
+  listSessions,
+  getSession,
+  renameSession,
+  deleteSession,
 } from "@/lib/api";
 import { useToast } from "@/hooks/useToast";
 import { usePanelResize } from "@/hooks/usePanelResize";
 import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
 import { DetailPanel } from "@/components/knowledge-bases/DetailPanel";
 import { AddSourceModal } from "@/components/knowledge-bases/AddSourceModal";
+import { SessionBar } from "@/components/knowledge-bases/SessionBar";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { flattenDocs } from "@/lib/types";
 import type {
+  ChatResponse,
   Citation,
   Document,
   DocumentDetail,
   FlatDocument,
   KnowledgeBase,
   PanelState,
-  QaResponse,
+  SessionItem,
   Source,
   SourceNode,
 } from "@/lib/types";
@@ -59,6 +66,7 @@ interface ChatAreaProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
   width?: number;
+  sessionBar?: React.ReactNode;
 }
 
 function ChatArea({
@@ -76,18 +84,18 @@ function ChatArea({
   onKeyDown,
   onSend,
   width,
+  sessionBar,
 }: ChatAreaProps) {
   const isMaximized = panelMode === "maximized";
 
   return (
     <div
       className={`flex flex-col h-full bg-white ${
-        isMaximized
-          ? "shrink-0 border-l border-gray-200"
-          : "flex-1 min-w-[360px]"
+        isMaximized ? "shrink-0 border-l border-gray-200" : "flex-1 min-w-[360px]"
       } ${!isDragging ? "transition-all duration-300 ease-in-out" : ""}`}
       style={isMaximized && width ? { width } : undefined}
     >
+      {sessionBar}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {hasMessages ? (
           <div className={isMaximized ? "py-4 px-3" : "mx-auto py-6 px-4"}>
@@ -96,10 +104,14 @@ function ChatArea({
             ))}
             {thinking && (
               <div className={`flex items-center gap-3 ${isMaximized ? "px-2 py-3" : "px-6 py-4"}`}>
-                <div className={`rounded-full bg-[#1A1A1A] flex items-center justify-center shrink-0 ${
-                  isMaximized ? "w-6 h-6" : "w-7 h-7"
-                }`}>
-                  <span className={`font-semibold text-white ${isMaximized ? "text-[10px]" : "text-[11px]"}`}>
+                <div
+                  className={`rounded-full bg-[#1A1A1A] flex items-center justify-center shrink-0 ${
+                    isMaximized ? "w-6 h-6" : "w-7 h-7"
+                  }`}
+                >
+                  <span
+                    className={`font-semibold text-white ${isMaximized ? "text-[10px]" : "text-[11px]"}`}
+                  >
                     AI
                   </span>
                 </div>
@@ -131,8 +143,12 @@ function ChatArea({
               onKeyDown={onKeyDown}
               placeholder={
                 !hasDocs
-                  ? isMaximized ? "Select documents…" : "Select documents from the sidebar to begin…"
-                  : isMaximized ? "Ask a question…" : "Ask a question about your documents…"
+                  ? isMaximized
+                    ? "Select documents…"
+                    : "Select documents from the sidebar to begin…"
+                  : isMaximized
+                    ? "Ask a question…"
+                    : "Ask a question about your documents…"
               }
               rows={1}
               className={`w-full resize-none rounded-xl px-4 py-3 text-sm text-[#2F3437]
@@ -141,16 +157,22 @@ function ChatArea({
                 transition-colors duration-200
                 bg-transparent`}
             />
-            <div className={`flex items-center justify-between ${isMaximized ? "px-2 pb-2" : "px-3 pb-3"}`}>
-              <span className={isMaximized ? "text-[9px] text-gray-300" : "text-[10px] text-gray-300"}>
+            <div
+              className={`flex items-center justify-between ${isMaximized ? "px-2 pb-2" : "px-3 pb-3"}`}
+            >
+              <span
+                className={isMaximized ? "text-[9px] text-gray-300" : "text-[10px] text-gray-300"}
+              >
                 {!hasDocs
-                  ? isMaximized ? "No docs" : "No documents selected"
+                  ? isMaximized
+                    ? "No docs"
+                    : "No documents selected"
                   : `${checkedDocIds.size} document${checkedDocIds.size === 1 ? "" : "s"} in context`}
               </span>
               <button
                 type="button"
                 onClick={onSend}
-                disabled={input.trim().length === 0 || thinking || !hasDocs}
+                disabled={input.trim().length === 0 || thinking}
                 className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
                   transition-all duration-200
                   disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed ${
@@ -275,6 +297,8 @@ function EmptyChat({ hasDocs }: { hasDocs: boolean }) {
 
 export default function WorkspacePage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { addToast } = useToast();
   const kbId = params.id;
 
@@ -330,13 +354,25 @@ export default function WorkspacePage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Sessions
+  const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+
   // ── Layout: panel resizing & modes ──
   type PanelMode = "normal" | "maximized";
   const [panelMode, setPanelMode] = useState<PanelMode>("normal");
-  const { width: rightPanelWidth, isDragging: isDraggingRight, dragHandleProps } = usePanelResize(400);
+  const {
+    width: rightPanelWidth,
+    isDragging: isDraggingRight,
+    dragHandleProps,
+  } = usePanelResize(400);
   // Second resize hook for the chat sidebar width in maximized mode
-  const { width: chatSidebarWidth, isDragging: isDraggingChat, dragHandleProps: chatDragHandleProps } =
-    usePanelResize(340);
+  const {
+    width: chatSidebarWidth,
+    isDragging: isDraggingChat,
+    dragHandleProps: chatDragHandleProps,
+  } = usePanelResize(340);
   const isDragging = isDraggingRight || isDraggingChat;
 
   // ── Derived: SourceNode[] ──
@@ -380,6 +416,23 @@ export default function WorkspacePage() {
     }));
     return [...fromSources, ...orphans];
   }, [sourceNodes, orphanedDocuments]);
+
+  // ── Restore document selection from session.reference_document_ids ──
+  // Called after loading a session's detail.
+  // reference_document_ids: null → select all; [] → none; [...] → just those.
+  const restoreDocSelection = useCallback(
+    (detail: { reference_document_ids: string[] | null }) => {
+      if (detail.reference_document_ids === null) {
+        // NULL = all documents selected (default)
+        setCheckedDocIds(new Set(documents.map((d) => d.id)));
+      } else if (detail.reference_document_ids.length === 0) {
+        setCheckedDocIds(new Set());
+      } else {
+        setCheckedDocIds(new Set(detail.reference_document_ids));
+      }
+    },
+    [documents],
+  );
 
   // ── Derived: active source for Studio detail view ──
   const activeSource = useMemo<DetailSourceDetail | null>(() => {
@@ -453,11 +506,11 @@ export default function WorkspacePage() {
       try {
         const kbDocs = await listKnowledgeBaseDocuments(kbId);
         const allSourceDocIds = new Set(
-          Object.values(bySource).flat().map((d) => d.id),
+          Object.values(bySource)
+            .flat()
+            .map((d) => d.id),
         );
-        const orphaned = kbDocs.filter(
-          (d) => d.source_id === null && !allSourceDocIds.has(d.id),
-        );
+        const orphaned = kbDocs.filter((d) => d.source_id === null && !allSourceDocIds.has(d.id));
         setOrphanedDocuments(orphaned);
       } catch {
         setOrphanedDocuments([]);
@@ -496,6 +549,16 @@ export default function WorkspacePage() {
     return () => clearInterval(interval);
   }, [sourcesFirstLoad, documentsBySource, sources, loadSources]);
 
+  // ── Default to select-all when no session is active ──
+  const initialSelectDone = useRef(false);
+
+  useEffect(() => {
+    if (initialSelectDone.current) return;
+    if (sourcesFirstLoad || activeSessionId !== null || documents.length === 0) return;
+    initialSelectDone.current = true;
+    setCheckedDocIds(new Set(documents.map((d) => d.id)));
+  }, [sourcesFirstLoad, documents, activeSessionId]);
+
   // ── Auto-scroll chat ──
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers scroll
   useEffect(() => {
@@ -504,16 +567,166 @@ export default function WorkspacePage() {
     }
   }, [messages]);
 
-  // ── Handlers ──
+  // ── Sessions: load on mount ──
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const result = await listSessions(kbId);
+      setSessions(result.data);
+      return result.data;
+    } catch {
+      return [] as SessionItem[];
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, [kbId]);
 
-  const handleToggleDocument = useCallback((docId: string) => {
-    setCheckedDocIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(docId)) next.delete(docId);
-      else next.add(docId);
-      return next;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSessions/searchParams stable; mount-only init
+  useEffect(() => {
+    loadSessions().then((sessionsList) => {
+      // Restore from URL query param
+      const urlSessionId = searchParams.get("session");
+      if (urlSessionId && sessionsList.some((s) => s.id === urlSessionId)) {
+        handleSelectSessionById(urlSessionId);
+      } else if (sessionsList.length > 0) {
+        handleSelectSession(sessionsList[0]);
+      }
     });
   }, []);
+
+  // ── Select session by ID (from URL) ──
+  const handleSelectSessionById = useCallback(
+    async (sessionId: string) => {
+      try {
+        const detail = await getSession(kbId, sessionId);
+        const msgs: ChatMessage[] = detail.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          citations: m.citations ?? undefined,
+          createdAt: m.created_at,
+        }));
+        setMessages(msgs);
+        setActiveSessionId(sessionId);
+        restoreDocSelection(detail);
+      } catch {
+        // Session may have been deleted; clear selection
+        setActiveSessionId(null);
+        setMessages([]);
+      }
+    },
+    [kbId, restoreDocSelection],
+  );
+
+  // ── Select session ──
+  const handleSelectSession = useCallback(
+    async (session: SessionItem) => {
+      router.replace(`/knowledge-bases/${kbId}?session=${session.id}`, {
+        scroll: false,
+      });
+      try {
+        const detail = await getSession(kbId, session.id);
+        const msgs: ChatMessage[] = detail.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          citations: m.citations ?? undefined,
+          createdAt: m.created_at,
+        }));
+        setMessages(msgs);
+        setActiveSessionId(session.id);
+        restoreDocSelection(detail);
+      } catch {
+        addToast("error", "Failed to load session");
+      }
+    },
+    [kbId, addToast, router, restoreDocSelection],
+  );
+
+  // ── New Chat (clear state, no API call) ──
+  const handleNewChat = useCallback(() => {
+    setActiveSessionId(null);
+    setMessages([]);
+    initialSelectDone.current = false;
+    setCheckedDocIds(new Set(documents.map((d) => d.id)));
+    router.replace(`/knowledge-bases/${kbId}`, { scroll: false });
+  }, [kbId, router, documents]);
+
+  // ── Rename session ──
+  const handleRenameSession = useCallback(
+    async (sessionId: string, title: string) => {
+      try {
+        const updated = await renameSession(kbId, sessionId, title);
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, title: updated.title } : s)),
+        );
+      } catch {
+        addToast("error", "Failed to rename session");
+      }
+    },
+    [kbId, addToast],
+  );
+
+  // ── Delete session ──
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await deleteSession(kbId, sessionId);
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null);
+          setMessages([]);
+          router.replace(`/knowledge-bases/${kbId}`, { scroll: false });
+        }
+        addToast("success", "Chat deleted");
+      } catch {
+        addToast("error", "Failed to delete session");
+      }
+    },
+    [kbId, activeSessionId, addToast, router],
+  );
+
+  // Persist document scope to session
+  const persistDocumentScope = useCallback(
+    (ids: Set<string>) => {
+      if (!activeSessionId) return;
+      const arr = Array.from(ids);
+      // NULL if all selected, else the array
+      const totalDocs = documents.length;
+      const reference_document_ids = ids.size === totalDocs && totalDocs > 0 ? null : arr;
+      api(`/api/v1/knowledge-bases/${kbId}/sessions/${activeSessionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ reference_document_ids }),
+      }).catch(() => {});
+    },
+    [activeSessionId, kbId, documents],
+  );
+
+  // ── Handlers ──
+
+  const handleToggleDocument = useCallback(
+    (docId: string) => {
+      setCheckedDocIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(docId)) next.delete(docId);
+        else next.add(docId);
+        persistDocumentScope(next);
+        return next;
+      });
+    },
+    [persistDocumentScope],
+  );
+
+  const handleToggleAll = useCallback(
+    (selectAll: boolean) => {
+      setCheckedDocIds(() => {
+        const next = selectAll ? new Set(documents.map((d) => d.id)) : new Set<string>();
+        persistDocumentScope(next);
+        return next;
+      });
+    },
+    [documents, persistDocumentScope],
+  );
 
   // Upload flow: create source → presign → browser-to-MinIO → complete → reload
   const handleAddSourceFromModal = useCallback(
@@ -573,32 +786,29 @@ export default function WorkspacePage() {
   }, []);
 
   // Select document — show content in right panel
-  const handleSelectDocument = useCallback(
-    async (docId: string) => {
-      setPanelState({ type: "document", documentId: docId });
-      setDocumentError("");
+  const handleSelectDocument = useCallback(async (docId: string) => {
+    setPanelState({ type: "document", documentId: docId });
+    setDocumentError("");
 
-      // Cache hit — render immediately
-      if (documentCacheRef.current.has(docId)) {
-        // Force re-render so activeDocument picks up from cache
-        setDocumentCache(new Map(documentCacheRef.current));
-        return;
-      }
+    // Cache hit — render immediately
+    if (documentCacheRef.current.has(docId)) {
+      // Force re-render so activeDocument picks up from cache
+      setDocumentCache(new Map(documentCacheRef.current));
+      return;
+    }
 
-      setLoadingDocument(true);
-      try {
-        const detail = await getDocumentChunks(docId);
-        documentCacheRef.current.set(docId, detail);
-        setDocumentCache(new Map(documentCacheRef.current));
-      } catch (err) {
-        setDocumentError(err instanceof Error ? err.message : "Failed to load document");
-        documentCacheRef.current.delete(docId);
-      } finally {
-        setLoadingDocument(false);
-      }
-    },
-    [],
-  );
+    setLoadingDocument(true);
+    try {
+      const detail = await getDocumentChunks(docId);
+      documentCacheRef.current.set(docId, detail);
+      setDocumentCache(new Map(documentCacheRef.current));
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : "Failed to load document");
+      documentCacheRef.current.delete(docId);
+    } finally {
+      setLoadingDocument(false);
+    }
+  }, []);
 
   // Retry loading a document that failed
   const handleRetryDocument = useCallback(() => {
@@ -698,12 +908,14 @@ export default function WorkspacePage() {
     }
   }, [deleteDocumentId, documentTitleToDelete, addToast, loadSources]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: checkedDocIds/documents are snapshot deps
   const handleSend = useCallback(async () => {
     const query = input.trim();
     if (!query || thinking) return;
 
+    const userMsgId = crypto.randomUUID();
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: userMsgId,
       role: "user",
       content: query,
       createdAt: new Date().toISOString(),
@@ -714,27 +926,39 @@ export default function WorkspacePage() {
     setThinking(true);
 
     try {
-      const result = await api<QaResponse>("/api/v1/qa/ask", {
-        method: "POST",
-        body: JSON.stringify({ query, knowledge_base_id: kbId, top_k: 10 }),
-      });
+      // First message carries doc scope to seed the session; subsequent messages read from session.
+      const docScope = checkedDocIds.size === documents.length ? null : Array.from(checkedDocIds);
+      const result = activeSessionId
+        ? await sendMessage(kbId, query, activeSessionId)
+        : await sendMessage(kbId, query, null, docScope);
+
+      // If session was auto-created, update state
+      if (!activeSessionId) {
+        setActiveSessionId(result.session_id);
+        router.replace(`/knowledge-bases/${kbId}?session=${result.session_id}`, { scroll: false });
+        loadSessions();
+      }
 
       const aiMsg: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: result.message_id || crypto.randomUUID(),
         role: "assistant",
-        content: result.data.answer,
-        citations: result.data.sources,
+        content: result.answer,
+        citations: result.citations,
         createdAt: new Date().toISOString(),
       };
 
       setMessages((prev) => [...prev, aiMsg]);
+
+      if (!result.persisted) {
+        addToast("error", "Conversation couldn't be saved");
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to get answer";
       addToast("error", msg);
     } finally {
       setThinking(false);
     }
-  }, [input, thinking, kbId, addToast]);
+  }, [input, thinking, kbId, activeSessionId, addToast, router, loadSessions]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -788,6 +1012,7 @@ export default function WorkspacePage() {
         sourcesFirstLoad={sourcesFirstLoad}
         sourcesError={sourcesError}
         onToggleDocument={handleToggleDocument}
+        onToggleAll={handleToggleAll}
         onAddSource={() => setAddSourceOpen(true)}
         onSelectSource={(sourceId) => setPanelState({ type: "source", sourceId })}
         onSelectDocument={handleSelectDocument}
@@ -813,6 +1038,17 @@ export default function WorkspacePage() {
             onInputChange={handleInputChange}
             onKeyDown={handleKeyDown}
             onSend={handleSend}
+            sessionBar={
+              <SessionBar
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                loading={sessionsLoading}
+                onSelectSession={handleSelectSession}
+                onNewChat={handleNewChat}
+                onRenameSession={handleRenameSession}
+                onDeleteSession={handleDeleteSession}
+              />
+            }
           />
 
           <div
@@ -824,7 +1060,8 @@ export default function WorkspacePage() {
             <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
           </div>
 
-          <div className="h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60 overflow-hidden shrink-0"
+          <div
+            className="h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60 overflow-hidden shrink-0"
             style={{ width: rightPanelWidth }}
           >
             <DetailPanel
@@ -895,6 +1132,17 @@ export default function WorkspacePage() {
             onKeyDown={handleKeyDown}
             onSend={handleSend}
             width={chatSidebarWidth}
+            sessionBar={
+              <SessionBar
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                loading={sessionsLoading}
+                onSelectSession={handleSelectSession}
+                onNewChat={handleNewChat}
+                onRenameSession={handleRenameSession}
+                onDeleteSession={handleDeleteSession}
+              />
+            }
           />
         </>
       )}

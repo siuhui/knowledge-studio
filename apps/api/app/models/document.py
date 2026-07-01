@@ -23,9 +23,7 @@ class Document(Base):
     full_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     text_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     # pending | ready | failed   (content lifecycle — does NOT track chunk/embed state)
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="pending"
-    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     doc_version: Mapped[str] = mapped_column(String(32), default="1")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

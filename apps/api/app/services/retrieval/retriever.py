@@ -11,25 +11,35 @@ from app.models.chunk import Chunk
 
 
 def _vector_search(
-    db: Session, *, query_embedding: list[float], knowledge_base_id: str, top_k: int
+    db: Session,
+    *,
+    query_embedding: list[float],
+    knowledge_base_id: str,
+    top_k: int,
+    document_ids: list[str] | None = None,
 ) -> list[tuple[Chunk, float]]:
     """Cosine similarity search via pgvector — single-table on Chunk."""
-    rows = (
+    q = (
         db.query(Chunk, Chunk.embedding.cosine_distance(query_embedding).label("score"))
         .filter(Chunk.knowledge_base_id == knowledge_base_id)
         .filter(Chunk.embedding.is_not(None))
-        .order_by("score")
-        .limit(top_k * 2)
-        .all()
     )
+    if document_ids is not None:
+        q = q.filter(Chunk.doc_id.in_(document_ids))
+    rows = q.order_by("score").limit(top_k * 2).all()
     return [(chunk, 1.0 - dist) for chunk, dist in rows]  # distance → similarity
 
 
 def _keyword_search(
-    db: Session, *, query: str, knowledge_base_id: str, top_k: int
+    db: Session,
+    *,
+    query: str,
+    knowledge_base_id: str,
+    top_k: int,
+    document_ids: list[str] | None = None,
 ) -> list[tuple[Chunk, float]]:
     """PostgreSQL full-text search — single-table on Chunk."""
-    rows = (
+    q = (
         db.query(
             Chunk,
             func.ts_rank(
@@ -39,10 +49,10 @@ def _keyword_search(
         )
         .filter(Chunk.knowledge_base_id == knowledge_base_id)
         .filter(func.to_tsvector("english", Chunk.content).match(query, postgresql_regconfig="english"))
-        .order_by(text("rank DESC"))
-        .limit(top_k * 2)
-        .all()
     )
+    if document_ids is not None:
+        q = q.filter(Chunk.doc_id.in_(document_ids))
+    rows = q.order_by(text("rank DESC")).limit(top_k * 2).all()
     return [(chunk, float(rank)) for chunk, rank in rows]
 
 
@@ -83,18 +93,29 @@ def hybrid_search(
     query_embedding: list[float],
     knowledge_base_id: str,
     top_k: int = 10,
+    document_ids: list[str] | None = None,
 ) -> list[tuple[Chunk, float]]:
-    """Perform hybrid search and return fused results (chunk, score)."""
+    """Perform hybrid search and return fused results (chunk, score).
+
+    document_ids:
+        None  — search all documents
+        []    — no documents selected (return empty)
+        [...] — filter to these documents
+    """
+    if document_ids is not None and len(document_ids) == 0:
+        return []
     vector_results = _vector_search(
         db,
         query_embedding=query_embedding,
         knowledge_base_id=knowledge_base_id,
         top_k=top_k,
+        document_ids=document_ids,
     )
     keyword_results = _keyword_search(
         db,
         query=query,
         knowledge_base_id=knowledge_base_id,
         top_k=top_k,
+        document_ids=document_ids,
     )
     return rrf_fusion(vector_results, keyword_results, top_k=top_k)

@@ -135,6 +135,41 @@ export interface QaResponse {
   sources: Citation[];
 }
 
+// ── Session & Chat ──
+
+export interface SessionItem {
+  id: string;
+  knowledge_base_id: string;
+  user_id: string;
+  title: string;
+  message_count: number;
+  reference_document_ids: string[] | null;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageItem {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: Citation[] | null;
+  created_at: string;
+}
+
+export interface SessionDetail extends SessionItem {
+  messages: MessageItem[];
+}
+
+export interface ChatResponse {
+  session_id: string;
+  message_id: string;
+  answer: string;
+  citations: Citation[];
+  persisted: boolean;
+}
+
 export interface ApiResponse<T> {
   code: string;
   message: string;

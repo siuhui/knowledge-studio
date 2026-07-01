@@ -1,3 +1,5 @@
+from app.models.chat_message import ChatMessage
+from app.models.chat_session import ChatSession
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.document_index_status import DocumentIndexStatus
@@ -13,6 +15,8 @@ __all__ = [
     "Document",
     "DocumentIndexStatus",
     "Chunk",
+    "ChatSession",
+    "ChatMessage",
     "DocumentStatus",
     "IndexStageStatus",
     "SourceStatus",
