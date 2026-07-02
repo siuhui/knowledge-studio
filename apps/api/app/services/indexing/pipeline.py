@@ -87,10 +87,17 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
 
     Returns the document ID.
     """
-    # ── Determine format from filename extension ──
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "text"
-    format_map = {"pdf": "pdf", "md": "markdown", "markdown": "markdown", "txt": "text"}
-    source_format = format_map.get(ext, "text")
+    # ── Determine format and strip recognized extension from title ──
+    if "." in filename:
+        name_part, ext_part = filename.rsplit(".", 1)
+        ext = ext_part.lower()
+        format_map = {"pdf": "pdf", "md": "markdown", "markdown": "markdown", "txt": "text"}
+        source_format = format_map.get(ext, "text")
+        title = name_part if ext in format_map else filename
+    else:
+        ext = "text"
+        source_format = "text"
+        title = filename
 
     from app.services.indexing.parser import PARSERS  # noqa: E402
 
@@ -102,7 +109,7 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
     document = Document(
         source_id=source_id,
         knowledge_base_id=kb_id,
-        title=filename,
+        title=title,
         path=filename,
         source_format=source_format,
         full_text="",

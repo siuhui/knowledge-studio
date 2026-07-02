@@ -58,10 +58,10 @@ class Document(Base):
     def chunk_status(self) -> str | None:
         if self.index_status is None:
             return None
-        return self.index_status.chunk_status
+        return str(self.index_status.chunk_status)
 
     @property
     def embed_status(self) -> str | None:
         if self.index_status is None:
             return None
-        return self.index_status.embed_status
+        return str(self.index_status.embed_status)

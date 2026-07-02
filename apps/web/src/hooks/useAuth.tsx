@@ -1,9 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api } from "@/lib/api";
+import { api, resetUnauthorizedFlag } from "@/lib/api";
 import { getToken, removeToken, setToken } from "@/lib/auth";
-import { logger } from "@/lib/logger";
 
 interface User {
   id: string;
@@ -20,6 +20,7 @@ interface AuthContextValue {
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -36,13 +37,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
+  // Listen for global 401 unauthorized events fired by the api layer
+  useEffect(() => {
+    const handler = () => {
+      removeToken();
+      setUser(null);
+      router.replace("/login");
+    };
+    window.addEventListener("auth:unauthorized", handler);
+    return () => window.removeEventListener("auth:unauthorized", handler);
+  }, [router]);
+
   const login = useCallback(async (username: string, password: string) => {
     const { data } = await api<unknown>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
+      skipUnauthorizedHandler: true,
     });
     const tokenData = data as { access_token: string };
     setToken(tokenData.access_token);
+    resetUnauthorizedFlag();
     setUser({ id: "", username });
   }, []);
 

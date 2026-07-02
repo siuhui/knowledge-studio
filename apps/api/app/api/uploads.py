@@ -26,7 +26,7 @@ from app.schemas.upload import (
     UploadCompleteRequest,
     UploadCompleteResponse,
 )
-from app.services.index_pipeline import run_index_pipeline
+from app.services.indexing import run_index_pipeline
 from app.services.object_storage import ObjectStorageService, sanitize_filename
 from app.services.source import SourceService
 

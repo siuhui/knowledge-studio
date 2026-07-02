@@ -11,7 +11,24 @@ import {
   type UploadCompleteResponse,
 } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+// ── 401 auto-redirect guard ──
+
+let unauthorizedHandled = false;
+
+/** Reset the guard so the next 401 triggers a redirect again. Call after successful login. */
+export function resetUnauthorizedFlag(): void {
+  unauthorizedHandled = false;
+}
+
+function dispatchUnauthorized(status: number, skipUnauthorizedHandler = false): void {
+  // skipUnauthorizedHandler lets callers opt out (e.g. login — 401 is a normal "bad credentials" response)
+  if (status === 401 && !skipUnauthorizedHandler && !unauthorizedHandled) {
+    unauthorizedHandled = true;
+    window.dispatchEvent(new Event("auth:unauthorized"));
+  }
+}
 
 function getAuthHeader(): Record<string, string> {
   if (typeof window === "undefined") return {};
@@ -20,49 +37,63 @@ function getAuthHeader(): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-export async function api<T>(
-  path: string,
-  options?: RequestInit,
-): Promise<{ data: T; requestId: string }> {
+interface ApiOptions extends RequestInit {
+  skipUnauthorizedHandler?: boolean;
+}
+
+// ── Shared HTTP layer ──
+// Fires the fetch, builds headers, handles 401 and errors.
+// Returns the raw Response — callers decide how to consume the body.
+
+interface RequestResult {
+  response: Response;
+  requestId: string;
+}
+
+async function request(path: string, options?: ApiOptions): Promise<RequestResult> {
+  const { skipUnauthorizedHandler = false, ...fetchOptions } = options ?? {};
   const requestId = crypto.randomUUID();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...fetchOptions,
     headers: {
-      "Content-Type": "application/json",
+      ...(fetchOptions.method && fetchOptions.method !== "GET" && {
+        "Content-Type": "application/json",
+      }),
       "X-Request-ID": requestId,
       ...getAuthHeader(),
-      ...options?.headers,
+      ...fetchOptions.headers,
     },
-    ...options,
   });
-  const rid = res.headers.get("X-Request-ID") || requestId;
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
-    throw new ApiError(err.code, err.message, res.status, rid);
+  const rid = response.headers.get("X-Request-ID") || requestId;
+  if (!response.ok) {
+    dispatchUnauthorized(response.status, skipUnauthorizedHandler);
+    const err = await response.json().catch(() => ({ code: "NETWORK_ERROR", message: response.statusText }));
+    throw new ApiError(err.code, err.message, response.status, rid);
   }
-  return { data: (await res.json()).data as T, requestId: rid };
+  return { response, requestId: rid };
+}
+
+// ── Response consumers ──
+
+export async function api<T>(
+  path: string,
+  options?: ApiOptions,
+): Promise<{ data: T; requestId: string }> {
+  const { response, requestId } = await request(path, options);
+  // 204 No Content and HEAD responses have no body — don't parse JSON
+  if (response.status === 204 || response.headers.get("content-length") === "0") {
+    return { data: undefined as T, requestId };
+  }
+  return { data: (await response.json()).data as T, requestId };
 }
 
 export async function apiPaginated<T>(
   path: string,
-  options?: RequestInit,
+  options?: ApiOptions,
 ): Promise<{ data: T[]; meta: PaginatedMeta; requestId: string }> {
-  const requestId = crypto.randomUUID();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      "X-Request-ID": requestId,
-      ...getAuthHeader(),
-      ...options?.headers,
-    },
-    ...options,
-  });
-  const rid = res.headers.get("X-Request-ID") || requestId;
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
-    throw new ApiError(err.code, err.message, res.status, rid);
-  }
-  const body = await res.json();
-  return { data: body.data as T[], meta: body.meta as PaginatedMeta, requestId: rid };
+  const { response, requestId } = await request(path, options);
+  const body = await response.json();
+  return { data: body.data as T[], meta: body.meta as PaginatedMeta, requestId };
 }
 
 // ── Presigned upload helpers ──
@@ -171,14 +202,8 @@ export async function sendMessageStream(
   referenceDocumentIds?: string[] | null,
   signal?: AbortSignal,
 ): Promise<{ stream: ReadableStream<Uint8Array> | null; requestId: string }> {
-  const requestId = crypto.randomUUID();
-  const res = await fetch(`${BASE_URL}/api/v1/chat/messages/stream`, {
+  const { response, requestId } = await request("/api/v1/chat/messages/stream", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Request-ID": requestId,
-      ...getAuthHeader(),
-    },
     body: JSON.stringify({
       knowledge_base_id: kbId,
       session_id: sessionId ?? null,
@@ -187,12 +212,7 @@ export async function sendMessageStream(
     }),
     signal,
   });
-  const rid = res.headers.get("X-Request-ID") || requestId;
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
-    throw new ApiError(err.code, err.message, res.status, rid);
-  }
-  return { stream: res.body, requestId: rid };
+  return { stream: response.body, requestId };
 }
 
 export async function listSessions(

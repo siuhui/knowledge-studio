@@ -2,7 +2,6 @@
 
 from fastapi.testclient import TestClient
 
-
 # ── Helpers ──
 
 def _create_kb(client: TestClient, auth_headers: dict, name: str = "Test KB") -> str:
@@ -22,7 +21,10 @@ def _create_session(
     from unittest.mock import patch
 
     mock_embed = [[0.0] * 1024]
-    with patch("app.services.embedding.embedder.embed", return_value=mock_embed):
+    with (
+        patch("app.services.embedding.embedder.embed", return_value=mock_embed),
+        patch("app.services.chat.llm_provider.generate", return_value="Mock answer"),
+    ):
         resp = client.post(
             "/api/v1/chat/messages",
             json={"knowledge_base_id": kb_id, "session_id": None, "content": content},

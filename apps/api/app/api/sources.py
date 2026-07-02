@@ -9,7 +9,7 @@ from app.schemas.common import ApiResponse, PaginatedResponse, PaginationMeta
 from app.schemas.document import DocumentItem
 from app.schemas.source import SourceCreate, SourceItem
 from app.services.document import DocumentService
-from app.services.index_pipeline import run_index_pipeline
+from app.services.indexing import run_index_pipeline
 from app.services.object_storage import ObjectStorageService
 from app.services.source import SourceService
 

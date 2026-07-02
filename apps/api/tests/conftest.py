@@ -11,13 +11,13 @@ if _test_file.exists():
 
 os.environ.setdefault("KB_ENV", "test")
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session
+import pytest  # noqa: E402 — must follow load_dotenv + KB_ENV setdefault
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
-from app.database import Base
-from app.main import app
+from app.database import Base  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture(scope="session")

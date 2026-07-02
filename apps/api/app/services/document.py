@@ -1,8 +1,11 @@
+from typing import TypedDict
+
 import structlog
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
 from app.core.response_codes import ResponseCode
+from app.models.chunk import Chunk
 from app.models.document import Document
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
@@ -12,6 +15,13 @@ from app.services.source import SourceService
 logger = structlog.get_logger(__name__)
 
 MAX_DOCUMENT_DETAIL_CHUNKS = 1000
+
+
+class DocumentChunksResult(TypedDict):
+    document: Document
+    chunks: list[Chunk]
+    total_count: int
+    truncated: bool
 
 
 class DocumentService:
@@ -27,7 +37,7 @@ class DocumentService:
     """
 
     @staticmethod
-    def get_by_id(db: Session, *, document_id: str, user_id: str) -> "Document":
+    def get_by_id(db: Session, *, document_id: str, user_id: str) -> Document:
         """Get a document by ID, verifying ownership via document.knowledge_base_id."""
         document = DocumentRepository.get_by_id(db, document_id=document_id)
         if not document:
@@ -52,7 +62,7 @@ class DocumentService:
         user_id: str,
         offset: int = 0,
         limit: int = 50,
-    ) -> tuple[list["Document"], int]:
+    ) -> tuple[list[Document], int]:
         """List all documents for a knowledge base, including orphaned ones."""
         KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
         return DocumentRepository.list_by_knowledge_base(
@@ -67,13 +77,13 @@ class DocumentService:
         user_id: str,
         offset: int = 0,
         limit: int = 50,
-    ) -> tuple[list["Document"], int]:
+    ) -> tuple[list[Document], int]:
         """List documents for a source with ownership verification."""
         SourceService.get_by_id(db, source_id=source_id, user_id=user_id)
         return DocumentRepository.list_by_source(db, source_id=source_id, offset=offset, limit=limit)
 
     @staticmethod
-    def get_chunks(db: Session, *, document_id: str, user_id: str) -> dict:
+    def get_chunks(db: Session, *, document_id: str, user_id: str) -> DocumentChunksResult:
         """Get document metadata and its indexed chunks.
 
         Returns chunk content in order so the frontend can render a continuous
