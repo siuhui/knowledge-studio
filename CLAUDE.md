@@ -127,9 +127,9 @@ Source (config) ──→ ObjectStorage (binary files)
 
 | Layer | Responsibility | Statuses |
 |---|---|---|
-| `source` | Configuration pointer — where content originated | `active`, `inactive`, `error` |
+| `source` | Configuration pointer — where content originated | `pending`, `active`, `invalid` |
 | ObjectStorage | Binary file persistence (MinIO/S3) | N/A — stateless |
-| `document` | Parsed text + indexing pipeline progress | `processing`, `active`, `error` |
+| `document` | Parsed text + indexing pipeline progress | `pending`, `processing`, `ready`, `failed` |
 
 Source `status` reflects configuration validity (is the S3 object still there? is the URL reachable?), NOT whether documents have been vectorized. Document `status` owns the pipeline lifecycle.
 
@@ -158,7 +158,7 @@ Source `status` reflects configuration validity (is the S3 object still there? i
 2. Browser → MinIO direct          → multipart/form-data POST (bytes bypass backend)
 3. POST /api/v1/uploads/complete   → validates object_key prefix matches kb_id → head_object → { object_key, filename, size }
 4. POST /api/v1/kb/{id}/sources    → SourceService.create(config={s3_key,...}) → BackgroundTasks: index_pipeline
-5. GET  /api/v1/sources/{id}/documents → poll for Document status (processing → active)
+5. GET  /api/v1/sources/{id}/documents → poll for Document status (processing → ready)
 6. POST /api/v1/sources/{id}/extract  → re-run pipeline from existing s3_key (retry on error)
 ```
 
