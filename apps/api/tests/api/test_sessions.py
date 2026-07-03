@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 # ── Helpers ──
 
+
 def _create_kb(client: TestClient, auth_headers: dict, name: str = "Test KB") -> str:
     resp = client.post(
         "/api/v1/knowledge-bases",
@@ -14,9 +15,7 @@ def _create_kb(client: TestClient, auth_headers: dict, name: str = "Test KB") ->
     return resp.json()["data"]["id"]
 
 
-def _create_session(
-    client: TestClient, auth_headers: dict, kb_id: str, content: str = "Hello"
-) -> str:
+def _create_session(client: TestClient, auth_headers: dict, kb_id: str, content: str = "Hello") -> str:
     """Create a session by sending a chat message (auto-creates session)."""
     from unittest.mock import patch
 

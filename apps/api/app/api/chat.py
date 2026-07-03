@@ -25,6 +25,7 @@ def send_message(
         session_id=payload.session_id,
         content=payload.content,
         reference_document_ids=payload.reference_document_ids,
+        search_strategy=payload.search_strategy,
     )
     return ApiResponse[ChatResponse](code=ResponseCode.OK, message="success", data=result)
 
@@ -37,13 +38,14 @@ async def send_message_stream(
 ) -> StreamingResponse:
     """Stream chat response as SSE events.
 
-    Event types returned (each as a JSON object in the ``data:`` field):
+    Event types (each a JSON object in the ``data:`` field):
 
-    - ``session`` — session_id, user_msg_id (sent first)
-    - ``token``   — text chunk from the LLM (one or more)
-    - ``citation``— deduplicated source citations
-    - ``done``    — persisted flag + ai_message_id
-    - ``error``   — error message (optional, sent before ``done``)
+    - ``session``        — session_id, user_msg_id (first event)
+    - ``agent_progress`` — retrieval progress indicator (optional, before ``token``)
+    - ``token``          — LLM text chunk (one or more)
+    - ``citation``       — deduplicated source citations
+    - ``done``           — persisted flag + ai_message_id
+    - ``error``          — error message (optional, before ``done``)
     """
 
     # Extract user_id before entering the async generator — the current_user
@@ -60,6 +62,7 @@ async def send_message_stream(
             session_id=payload.session_id,
             content=payload.content,
             reference_document_ids=payload.reference_document_ids,
+            search_strategy=payload.search_strategy,
         ):
             yield f"data: {event_json}\n\n"
 

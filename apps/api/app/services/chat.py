@@ -58,6 +58,7 @@ class ChatService:
         session_id: str | None,
         content: str,
         reference_document_ids: list[str] | None = None,
+        search_strategy: str = "agentic",
     ) -> ChatResponse:
         """Send a chat message. Auto-creates session if session_id is None.
 
@@ -92,6 +93,7 @@ class ChatService:
                 knowledge_base_id=kb_id,
                 top_k=10,
                 document_ids=doc_ids,
+                strategy=search_strategy,
             )
 
         context = _build_context(retrieval)
@@ -147,11 +149,18 @@ class ChatService:
         session_id: str | None,
         content: str,
         reference_document_ids: list[str] | None = None,
+        search_strategy: str = "agentic",
     ) -> AsyncIterator[str]:
         """Stream chat response as SSE JSON event strings.
 
-        Yields JSON strings (one per SSE ``data:`` field) with types:
-        session, token, citation, done, error.
+        Yields JSON strings (one per SSE ``data:`` field).  Event types:
+
+        ``session``        — session_id, user_msg_id (always first)
+        ``agent_progress`` — retrieval progress indicator (optional, before tokens)
+        ``token``          — LLM text chunk (one or more)
+        ``citation``       — deduplicated source citations
+        ``done``           — persisted flag + ai_message_id
+        ``error``          — error message (before ``done`` on failure)
         """
         doc_ids = reference_document_ids
 
@@ -214,7 +223,15 @@ class ChatService:
                     knowledge_base_id=kb_id,
                     top_k=10,
                     document_ids=doc_ids,
+                    strategy=search_strategy,
                 )
+
+            # Emit agent progress events before streaming tokens.
+            # These are user-facing status indicators (e.g. "搜索「xxx」…"),
+            # not raw tool calls — safe to emit by default.
+            if retrieval and retrieval.agent_steps:
+                for step in retrieval.agent_steps:
+                    yield json.dumps(step)
 
             context = _build_context(retrieval)
 

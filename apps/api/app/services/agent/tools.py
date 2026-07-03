@@ -28,7 +28,7 @@ def _build_summary(rows: list[dict[str, Any]], max_chars: int = 500) -> str:
     lines: list[str] = []
     total = 0
     for r in rows:
-        line = f"[{r['rank']}] {r['title']}: {r['snippet'][:120]}"
+        line = f"[{r['rank']}] UUID={r['id']} | {r['title']}: {r['snippet'][:120]}"
         if total + len(line) > max_chars:
             lines.append(f"... ({len(rows) - len(lines)} more results)")
             break
@@ -38,6 +38,14 @@ def _build_summary(rows: list[dict[str, Any]], max_chars: int = 500) -> str:
 
 
 # ── FTS helper ───────────────────────────────────────────────────────────────
+
+
+# pgvector FTS config used for all text-search operations.
+# 'simple' is chosen over 'english' because it does not strip stopwords
+# or apply English-specific stemming — it only lowercases and splits on
+# whitespace/punctuation, making it usable for mixed-language corpora
+# (e.g. Chinese, Japanese, Korean alongside English).
+_FTS_CONFIG = "simple"
 
 
 def _execute_fts(
@@ -51,21 +59,21 @@ def _execute_fts(
 
     Uses plainto_tsquery for user-friendly search — no tsquery syntax required.
     """
-    ts_vector = func.to_tsvector("english", Document.full_text)
-    ts_query = func.plainto_tsquery("english", query)
+    ts_vector = func.to_tsvector(_FTS_CONFIG, Document.full_text)
+    ts_query = func.plainto_tsquery(_FTS_CONFIG, query)
 
     q = (
         db.query(
             Document.id.label("id"),
             Document.title.label("title"),
-            func.ts_headline("english", Document.full_text, ts_query, "MaxWords=40, MinWords=15, ShortWord=3").label(
+            func.ts_headline(_FTS_CONFIG, Document.full_text, ts_query, "MaxWords=40, MinWords=15, ShortWord=3").label(
                 "snippet"
             ),
             func.ts_rank(ts_vector, ts_query).label("rank"),
         )
         .filter(Document.knowledge_base_id == kb_id)
         .filter(Document.status == "ready")
-        .filter(ts_vector.match(query, postgresql_regconfig="english"))
+        .filter(ts_vector.match(query, postgresql_regconfig=_FTS_CONFIG))
     )
 
     if document_ids:
@@ -135,7 +143,12 @@ def _read_document_impl(
 
     if doc is None:
         return ToolResult(
-            summary=f"Document {document_id} not found.",
+            summary=(
+                f"Document '{document_id}' not found. "
+                "Document IDs are UUIDs (e.g. '550e8400-e29b-41d4-a716-446655440000'). "
+                "Use list_documents to get the correct UUID for each document. "
+                "Do NOT pass document titles — only UUIDs work."
+            ),
             artifacts=[],
             artifact_count=0,
             metadata={"document_id": document_id},
@@ -184,7 +197,11 @@ def _read_document_impl(
         summary=summary,
         artifacts=[artifact],
         artifact_count=1,
-        metadata={"document_id": document_id, "total_chars": total_chars, "latency_ms": round((time.perf_counter() - t0) * 1000, 2)},
+        metadata={
+            "document_id": document_id,
+            "total_chars": total_chars,
+            "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+        },
     )
 
 
@@ -203,6 +220,7 @@ def _list_documents_impl(ctx: ToolContext) -> ToolResult:
             summary="No documents found in this knowledge base.",
             artifacts=[],
             artifact_count=0,
+            metadata={"document_count": 0},
         )
 
     artifacts = [
@@ -218,12 +236,23 @@ def _list_documents_impl(ctx: ToolContext) -> ToolResult:
         for d in docs
     ]
 
-    lines = [f"{i + 1}. {d.title} ({d.source_format}, {len(d.full_text)} chars)" for i, d in enumerate(docs)]
-    summary = f"Found {len(docs)} document(s):\n" + "\n".join(lines[:20])
+    lines = [
+        f"{i + 1}. UUID={d.id} | title='{d.title}' | format={d.source_format} | size={len(d.full_text)} chars"
+        for i, d in enumerate(docs)
+    ]
+    summary = (
+        f"Found {len(docs)} document(s). Use the UUID (not title) with read_document or search_keywords:\n"
+        + "\n".join(lines[:20])
+    )
     if len(docs) > 20:
         summary += f"\n... and {len(docs) - 20} more."
 
-    logger.info("list_documents executed", kb_id=ctx.kb_id, count=len(docs), latency_ms=round((time.perf_counter() - t0) * 1000, 2))
+    logger.info(
+        "list_documents executed",
+        kb_id=ctx.kb_id,
+        count=len(docs),
+        latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+    )
 
     return ToolResult(
         summary=summary,
@@ -255,7 +284,7 @@ search_keywords = _ToolDef(
     name="search_keywords",
     description=(
         "Search for keywords or phrases in the full text of documents in the knowledge base. "
-        "Returns matching document snippets with ranking scores. "
+        "Returns matching document snippets with ranking scores and their UUID document IDs. "
         "Use this to find specific concepts, terms, or facts across all documents."
     ),
     parameters={
@@ -268,7 +297,12 @@ search_keywords = _ToolDef(
             "document_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional list of document IDs to limit the search scope.",
+                "description": (
+                    "Optional list of document UUIDs to limit the search scope. "
+                    "Must be exact UUIDs (e.g. '550e8400-e29b-41d4-a716-446655440000') "
+                    "obtained from list_documents or a previous search_keywords call. "
+                    "Do NOT pass document titles here."
+                ),
             },
             "top_k": {
                 "type": "integer",
@@ -285,15 +319,20 @@ read_document = _ToolDef(
     name="read_document",
     description=(
         "Read a specific portion of a document's full text by character offset. "
-        "Use search_keywords first to find relevant locations, then use this tool "
-        "to read the full surrounding context."
+        "Use search_keywords or list_documents first to obtain the correct document UUID, "
+        "then use this tool to read the full surrounding context. "
+        "IMPORTANT: document_id must be a UUID, never a document title."
     ),
     parameters={
         "type": "object",
         "properties": {
             "document_id": {
                 "type": "string",
-                "description": "The ID of the document to read.",
+                "description": (
+                    "UUID of the document to read (e.g. '550e8400-e29b-41d4-a716-446655440000'). "
+                    "Must be an exact UUID obtained from list_documents or search_keywords results. "
+                    "Do NOT pass a document title, filename, or any other string — only a UUID."
+                ),
             },
             "offset": {
                 "type": "integer",
@@ -313,8 +352,9 @@ read_document = _ToolDef(
 list_documents = _ToolDef(
     name="list_documents",
     description=(
-        "List all documents in the knowledge base with titles, formats, and sizes. "
-        "Use this to understand what documents are available before searching."
+        "List all documents in the knowledge base with their UUID IDs, titles, formats, and sizes. "
+        "Always call this first to discover available documents and their UUIDs. "
+        "The returned UUIDs are needed for search_keywords (to scope) and read_document (to read)."
     ),
     parameters={"type": "object", "properties": {}},
     execute=_list_documents_impl,

@@ -20,14 +20,17 @@ import {
 } from "@/lib/api";
 import { parseSSEStream } from "@/lib/sse";
 import { useToast } from "@/hooks/useToast";
+import { useDocumentSelection } from "@/hooks/useDocumentSelection";
 import { usePanelResize } from "@/hooks/usePanelResize";
 import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
 import { DetailPanel } from "@/components/knowledge-bases/DetailPanel";
 import { AddSourceModal } from "@/components/knowledge-bases/AddSourceModal";
 import { SessionBar } from "@/components/knowledge-bases/SessionBar";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { MarkdownContent } from "@/components/ui/MarkdownContent";
 import { flattenDocs } from "@/lib/types";
 import type {
+  AgentProgressEvent,
   Citation,
   Document,
   DocumentDetail,
@@ -58,6 +61,7 @@ interface ChatAreaProps {
   hasMessages: boolean;
   messages: ChatMessage[];
   chatStatus: "idle" | "thinking" | "streaming" | "error";
+  agentSteps: AgentProgressEvent[];
   hasDocs: boolean;
   input: string;
   checkedDocIds: Set<string>;
@@ -77,6 +81,7 @@ function ChatArea({
   hasMessages,
   messages,
   chatStatus,
+  agentSteps,
   hasDocs,
   input,
   checkedDocIds,
@@ -102,30 +107,21 @@ function ChatArea({
       {sessionBar}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {hasMessages ? (
-          <div className={isMaximized ? "py-4 px-3" : "mx-auto py-6 px-4"}>
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
-            {chatStatus === "thinking" && (
-              <div className={`flex items-center gap-3 ${isMaximized ? "px-2 py-3" : "px-6 py-4"}`}>
-                <div
-                  className={`rounded-full bg-[#1A1A1A] flex items-center justify-center shrink-0 ${
-                    isMaximized ? "w-6 h-6" : "w-7 h-7"
-                  }`}
-                >
-                  <span
-                    className={`font-semibold text-white ${isMaximized ? "text-[10px]" : "text-[11px]"}`}
-                  >
-                    AI
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.15s]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse [animation-delay:0.3s]" />
-                </div>
-              </div>
-            )}
+          <div className={isMaximized ? "py-4" : "py-6"}>
+            {messages.map((msg, i) => {
+              const isLast = i === messages.length - 1;
+              const isLastAssistant = isLast && msg.role === "assistant";
+              return (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  isLastAssistant={isLastAssistant}
+                  isThinking={isLastAssistant && chatStatus === "thinking"}
+                  agentSteps={isLastAssistant && agentSteps.length > 0 ? agentSteps : undefined}
+                  isMaximized={isMaximized}
+                />
+              );
+            })}
           </div>
         ) : (
           <EmptyChat hasDocs={hasDocs} />
@@ -133,101 +129,70 @@ function ChatArea({
       </div>
 
       {/* Input area */}
-      <div className={isMaximized ? "px-2 pb-3 pt-1" : "px-6 pb-6 pt-2"}>
-        <div className={isMaximized ? "" : "mx-auto"}>
-          <div
-            className={`bg-white border transition-all duration-200 ${
-              isMaximized ? "rounded-lg" : "rounded-xl shadow-md"
-            } ${input.length > 0 ? "border-gray-300" : "border-gray-200/80"}`}
-          >
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={onInputChange}
-              onKeyDown={onKeyDown}
-              placeholder={
-                !hasDocs
-                  ? isMaximized
-                    ? "Select documents…"
-                    : "Select documents from the sidebar to begin…"
-                  : isMaximized
-                    ? "Ask a question…"
-                    : "Ask a question about your documents…"
-              }
-              rows={1}
-              className={`w-full resize-none rounded-xl px-4 py-3 text-sm text-[#2F3437]
-                placeholder:text-gray-300 outline-none
-                focus:border-gray-400 focus:ring-0
-                transition-colors duration-200
-                bg-transparent`}
-            />
-            <div
-              className={`flex items-center justify-between ${isMaximized ? "px-2 pb-2" : "px-3 pb-3"}`}
-            >
-              <span
-                className={isMaximized ? "text-[9px] text-gray-300" : "text-[10px] text-gray-300"}
+      <div className={isMaximized ? "px-2 pb-3 pt-1" : "px-4 pb-4 pt-2"}>
+        <div
+          className={`flex items-center gap-2.5 bg-white border rounded-xl px-3.5 py-2 transition-all duration-200
+            ${input.length > 0 ? "border-gray-300" : "border-gray-200/80"}`}
+        >
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={onInputChange}
+            onKeyDown={onKeyDown}
+            placeholder={hasDocs ? "Ask a question…" : "Select documents to begin…"}
+            rows={1}
+            className="flex-1 resize-none bg-transparent py-0.5 text-sm text-[#2F3437]
+              placeholder:text-gray-300 outline-none"
+          />
+          <div className="flex items-center shrink-0">
+            {chatStatus === "streaming" ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="w-7 h-7 flex items-center justify-center rounded-lg
+                  bg-[#1A1A1A] text-white hover:bg-[#2F3437] transition-colors
+                  active:scale-95"
+                aria-label="Stop generating"
               >
-                {!hasDocs
-                  ? isMaximized
-                    ? "No docs"
-                    : "No documents selected"
-                  : `${checkedDocIds.size} document${checkedDocIds.size === 1 ? "" : "s"} in context`}
-              </span>
-              {chatStatus === "streaming" ? (
-                <button
-                  type="button"
-                  onClick={onStop}
-                  className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
-                    transition-all duration-200 ${
-                      isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
-                    }`}
-                  aria-label="Stop generating"
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
                 >
-                  <svg
-                    width={isMaximized ? 9 : 11}
-                    height={isMaximized ? 9 : 11}
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <rect x="4" y="4" width="16" height="16" rx="2" />
-                  </svg>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onSend}
-                  disabled={input.trim().length === 0 || isBusy}
-                  className={`flex items-center justify-center bg-[#1A1A1A] text-white hover:bg-[#2F3437]
-                    transition-all duration-200
-                    disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed ${
-                      isMaximized ? "w-6 h-6 rounded-md shrink-0" : "w-8 h-8 rounded-lg shrink-0"
-                    }`}
-                  aria-label="Send message"
+                  <rect x="4" y="4" width="16" height="16" rx="3" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={input.trim().length === 0 || isBusy}
+                className="w-7 h-7 flex items-center justify-center rounded-lg
+                  bg-[#1A1A1A] text-white hover:bg-[#2F3437] transition-all duration-200
+                  active:scale-95
+                  disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed
+                  disabled:active:scale-100"
+                aria-label="Send message"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                 >
-                  <svg
-                    width={isMaximized ? 11 : 14}
-                    height={isMaximized ? 11 : 14}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
-                </button>
-              )}
-            </div>
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              </button>
+            )}
           </div>
-          {!isMaximized && (
-            <p className="text-[10px] text-gray-300 text-center mt-2">
-              Press Enter to send, Shift+Enter for new line
-            </p>
-          )}
         </div>
       </div>
     </div>
@@ -235,51 +200,148 @@ function ChatArea({
 }
 
 // ── Message bubble ──
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  isLastAssistant,
+  isThinking,
+  agentSteps,
+  isMaximized,
+}: {
+  message: ChatMessage;
+  isLastAssistant?: boolean;
+  isThinking?: boolean;
+  agentSteps?: AgentProgressEvent[];
+  isMaximized?: boolean;
+}) {
   const isUser = message.role === "user";
-  const initials = isUser ? "U" : "AI";
+
+  if (isUser) {
+    return (
+      <div className="flex justify-end px-4 py-2">
+        <div className="max-w-[80%] bg-[#F1F1F4] rounded-lg px-3.5 py-2">
+          <p className="text-sm text-[#2F3437] leading-relaxed whitespace-pre-wrap break-words">
+            {message.content}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const isEmpty = !message.content;
+  const hasSteps = agentSteps && agentSteps.length > 0;
 
   return (
-    <div className="group flex gap-3 px-6 py-4">
-      <div
-        className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold ${
-          isUser ? "bg-gray-200 text-gray-500" : "bg-[#1A1A1A] text-white"
-        }`}
-      >
-        {initials}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 mb-1">
-          <span className="text-xs font-medium text-[#2F3437]">{isUser ? "You" : "AI"}</span>
-          <span className="text-[10px] text-gray-300">
-            {new Date(message.createdAt).toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </span>
+    <div className="px-4 py-2">
+      {/* Agent steps — expandable tool-call style blocks */}
+      {hasSteps && (
+        <div className="mb-2 rounded-lg border border-gray-200/80 bg-gray-50/50 overflow-hidden">
+          {agentSteps.map((step, i) => (
+            <AgentStepRow
+              // biome-ignore lint/suspicious/noArrayIndexKey: append-only ephemeral list
+              key={i}
+              step={step}
+              compact={isMaximized ?? false}
+              isLast={i === agentSteps.length - 1}
+            />
+          ))}
         </div>
-        <div className="text-sm text-[#2F3437] leading-relaxed whitespace-pre-wrap">
-          {message.content}
-        </div>
-        {message.citations && message.citations.length > 0 && (
-          <div className="mt-2 space-y-1">
+      )}
+
+      {/* Thinking indicator when no progress yet */}
+      {isThinking && !hasSteps && isEmpty && (
+        <span className="text-sm text-gray-400 italic">Thinking…</span>
+      )}
+
+      {/* Message content */}
+      {message.content && (
+        <MarkdownContent
+          content={message.content}
+          className="text-sm text-[#2F3437] leading-relaxed break-words"
+        />
+      )}
+
+      {/* Citations — minimal inline footnotes */}
+      {message.citations && message.citations.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-gray-100">
+          <p className="text-[11px] text-gray-400 mb-1.5">Sources</p>
+          <div className="space-y-1">
             {message.citations.map((c, i) => (
-              <div
-                key={`${c.document_id}-${c.chunk_index}`}
-                className="text-[11px] text-gray-400 bg-gray-50 rounded-lg px-2.5 py-1.5 border border-gray-100/90"
-              >
-                <span className="font-medium text-gray-500">[{i + 1}]</span>{" "}
-                <span className="text-gray-400">{c.document_title}</span>
+              <div key={`${c.document_id}-${c.chunk_index}`} className="text-[11px] text-gray-500">
+                <span className="font-medium text-gray-400">[{i + 1}]</span>{" "}
+                <span className="text-gray-500">{c.document_title}</span>
                 {c.content_snippet && (
-                  <span className="text-gray-300 block mt-0.5 line-clamp-1">
-                    &ldquo;{c.content_snippet}&rdquo;
+                  <span className="text-gray-400 ml-1.5 italic">
+                    &ldquo;{c.content_snippet.slice(0, 120)}
+                    {c.content_snippet.length > 120 ? "…" : ""}&rdquo;
                   </span>
                 )}
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Agent step labels (frontend owns display strings) ──
+
+const STATUS_LABELS: Record<AgentProgressEvent["status"], string> = {
+  listing: "searched docs",
+  searching: "searched",
+  reading: "read",
+  analyzing: "analyzed",
+  error: "error",
+};
+
+function formatStepMessage(step: AgentProgressEvent): string {
+  switch (step.status) {
+    case "listing":
+      return step.document_count
+        ? `found ${step.document_count} document(s)`
+        : "no documents found";
+    case "searching":
+      if (step.query === undefined) return "";
+      return step.hits
+        ? `"${step.query}" — ${step.hits} match(es)`
+        : `"${step.query}" — no results`;
+    case "reading":
+      if (!step.found) return "document not found";
+      return step.document_title ? `${step.document_title}` : "reading...";
+    case "analyzing":
+      return "preparing answer...";
+    case "error":
+      return "retrieval error, retrying...";
+  }
+}
+
+function AgentStepRow({
+  step,
+  compact,
+  isLast,
+}: {
+  step: AgentProgressEvent;
+  compact: boolean;
+  isLast: boolean;
+}) {
+  const label = STATUS_LABELS[step.status];
+  const detail = formatStepMessage(step);
+  const isError = step.status === "error";
+  const isDone = step.status === "analyzing" && isLast;
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono
+        ${!isLast ? "border-b border-gray-100" : ""}
+        ${isError ? "text-red-500 bg-red-50/30" : isDone ? "text-gray-500" : "text-gray-400"}`}
+    >
+      <span
+        className={`shrink-0 ${isError ? "text-red-400" : isDone ? "text-blue-400" : "text-gray-300"}`}
+      >
+        {isError ? "✗" : isDone ? "●" : "○"}
+      </span>
+      <span className="font-medium text-gray-500 shrink-0">{label}</span>
+      {detail && <span className="text-gray-400 truncate">{detail}</span>}
     </div>
   );
 }
@@ -358,9 +420,6 @@ export default function WorkspacePage() {
   // Re-extract
   const [extractingSourceId, setExtractingSourceId] = useState<string | null>(null);
 
-  // Documents & selection
-  const [checkedDocIds, setCheckedDocIds] = useState<Set<string>>(new Set());
-
   // Modals
   const [addSourceOpen, setAddSourceOpen] = useState(false);
 
@@ -377,6 +436,7 @@ export default function WorkspacePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [chatStatus, setChatStatus] = useState<"idle" | "thinking" | "streaming" | "error">("idle");
+  const [agentSteps, setAgentSteps] = useState<AgentProgressEvent[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamingMsgIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -445,22 +505,9 @@ export default function WorkspacePage() {
     return [...fromSources, ...orphans];
   }, [sourceNodes, orphanedDocuments]);
 
-  // ── Restore document selection from session.reference_document_ids ──
-  // Called after loading a session's detail.
-  // reference_document_ids: null → select all; [] → none; [...] → just those.
-  const restoreDocSelection = useCallback(
-    (detail: { reference_document_ids: string[] | null }) => {
-      if (detail.reference_document_ids === null) {
-        // NULL = all documents selected (default)
-        setCheckedDocIds(new Set(documents.map((d) => d.id)));
-      } else if (detail.reference_document_ids.length === 0) {
-        setCheckedDocIds(new Set());
-      } else {
-        setCheckedDocIds(new Set(detail.reference_document_ids));
-      }
-    },
-    [documents],
-  );
+  // ── Document selection (reactive: null=all, []=none, [...]=subset) ──
+  const { checkedDocIds, setCheckedDocIds, restoreDocSelection, resetSelection } =
+    useDocumentSelection(documents);
 
   // ── Derived: active source for Studio detail view ──
   const activeSource = useMemo<DetailSourceDetail | null>(() => {
@@ -577,16 +624,6 @@ export default function WorkspacePage() {
     return () => clearInterval(interval);
   }, [sourcesFirstLoad, documentsBySource, sources, loadSources]);
 
-  // ── Default to select-all when no session is active ──
-  const initialSelectDone = useRef(false);
-
-  useEffect(() => {
-    if (initialSelectDone.current) return;
-    if (sourcesFirstLoad || activeSessionId !== null || documents.length === 0) return;
-    initialSelectDone.current = true;
-    setCheckedDocIds(new Set(documents.map((d) => d.id)));
-  }, [sourcesFirstLoad, documents, activeSessionId]);
-
   // ── Auto-scroll chat ──
   const isNearBottomRef = useRef(true);
 
@@ -687,10 +724,9 @@ export default function WorkspacePage() {
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
     setMessages([]);
-    initialSelectDone.current = false;
-    setCheckedDocIds(new Set(documents.map((d) => d.id)));
+    resetSelection();
     router.replace(`/knowledge-bases/${kbId}`, { scroll: false });
-  }, [kbId, router, documents]);
+  }, [kbId, router, resetSelection]);
 
   // ── Rename session ──
   const handleRenameSession = useCallback(
@@ -716,6 +752,7 @@ export default function WorkspacePage() {
         if (activeSessionId === sessionId) {
           setActiveSessionId(null);
           setMessages([]);
+          resetSelection();
           router.replace(`/knowledge-bases/${kbId}`, { scroll: false });
         }
         addToast("success", "Chat deleted");
@@ -723,7 +760,7 @@ export default function WorkspacePage() {
         addToast("error", "Failed to delete session");
       }
     },
-    [kbId, activeSessionId, addToast, router],
+    [kbId, activeSessionId, addToast, router, resetSelection],
   );
 
   // Persist document scope to session
@@ -754,7 +791,7 @@ export default function WorkspacePage() {
         return next;
       });
     },
-    [persistDocumentScope],
+    [persistDocumentScope, setCheckedDocIds],
   );
 
   const handleToggleAll = useCallback(
@@ -765,7 +802,7 @@ export default function WorkspacePage() {
         return next;
       });
     },
-    [documents, persistDocumentScope],
+    [documents, persistDocumentScope, setCheckedDocIds],
   );
 
   // Upload flow: create source → presign → browser-to-MinIO → complete → reload
@@ -963,6 +1000,7 @@ export default function WorkspacePage() {
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setChatStatus("thinking");
+    setAgentSteps([]);
     isNearBottomRef.current = true;
 
     const controller = new AbortController();
@@ -978,20 +1016,26 @@ export default function WorkspacePage() {
 
       let accumulated = "";
       let sessionEventFired = false;
+      let firstTokenSeen = false;
 
-      setChatStatus("streaming");
+      // Keep "thinking" state during agent retrieval — switch to
+      // "streaming" only when the first token arrives so the
+      // agent_progress step list is visible to the user.
+      // ──────────────────────────────────────────────────────────
 
       await parseSSEStream(
         stream,
         (event: StreamEvent) => {
           switch (event.type) {
+            case "agent_progress":
+              setAgentSteps((prev) => [...prev, event]);
+              break;
             case "session": {
               if (!activeSessionId) {
                 setActiveSessionId(event.session_id);
-                router.replace(
-                  `/knowledge-bases/${kbId}?session=${event.session_id}`,
-                  { scroll: false },
-                );
+                router.replace(`/knowledge-bases/${kbId}?session=${event.session_id}`, {
+                  scroll: false,
+                });
                 loadSessions();
               }
               // Create placeholder AI message
@@ -1010,6 +1054,10 @@ export default function WorkspacePage() {
               break;
             }
             case "token":
+              if (!firstTokenSeen) {
+                firstTokenSeen = true;
+                setChatStatus("streaming");
+              }
               accumulated += event.text;
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
@@ -1148,6 +1196,7 @@ export default function WorkspacePage() {
             hasMessages={hasMessages}
             messages={messages}
             chatStatus={chatStatus}
+            agentSteps={agentSteps}
             hasDocs={hasDocs}
             input={input}
             checkedDocIds={checkedDocIds}
@@ -1242,6 +1291,7 @@ export default function WorkspacePage() {
             hasMessages={hasMessages}
             messages={messages}
             chatStatus={chatStatus}
+            agentSteps={agentSteps}
             hasDocs={hasDocs}
             input={input}
             checkedDocIds={checkedDocIds}

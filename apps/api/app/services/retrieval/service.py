@@ -1,26 +1,30 @@
-"""Retrieval service: hybrid search with citation building."""
+"""Retrieval service — strategy dispatcher.
+
+Delegates to registered SearchStrategy implementations.  The default
+strategy is "agentic" (multi-round LLM-driven keyword search, zero
+embedding cost).  "hybrid" is available as an opt-in alternative.
+"""
 
 import structlog
 from sqlalchemy.orm import Session
 
-from app.models.document import Document
-from app.schemas.retrieval.response import RetrievalChunk, RetrievalQueryResponse
-from app.services.retrieval.citation_builder import build_citations
-from app.services.retrieval.reranker import rerank
-from app.services.retrieval.retriever import hybrid_search
+from app.core.errors import ValidationError
+from app.core.response_codes import ResponseCode
+from app.schemas.retrieval.response import RetrievalQueryResponse
 
 logger = structlog.get_logger(__name__)
 
 
-def _batch_fetch_documents(db: Session, *, doc_ids: set[str]) -> dict[str, Document]:
-    """Fetch Document records by ID for citation/title enrichment."""
-    if not doc_ids:
-        return {}
-    docs = db.query(Document).filter(Document.id.in_(doc_ids)).all()
-    return {d.id: d for d in docs}
-
-
 class RetrievalService:
+    """Thin dispatch layer over registered search strategies.
+
+    Call sites only need to know the strategy name; the service looks up
+    the implementation and delegates.  Strategy implementations live under
+    ``services/retrieval/strategies/``.
+    """
+
+    DEFAULT_STRATEGY = "agentic"
+
     @staticmethod
     def search(
         db: Session,
@@ -29,55 +33,32 @@ class RetrievalService:
         knowledge_base_id: str,
         top_k: int = 10,
         document_ids: list[str] | None = None,
+        strategy: str | None = None,
     ) -> RetrievalQueryResponse:
-        # Generate query embedding
-        from app.services.embedding import embedder
+        # Import strategies here to trigger @register decorators.
+        # Lazy import avoids circular deps (strategies import from this package).
+        from app.services.retrieval.strategies import STRATEGIES  # noqa: F811
 
-        query_embedding = embedder.embed([query])[0]
+        strategy_name = strategy or RetrievalService.DEFAULT_STRATEGY
+        impl = STRATEGIES.get(strategy_name)
+        if impl is None:
+            available = sorted(STRATEGIES.keys())
+            raise ValidationError(
+                code=ResponseCode.SEARCH_STRATEGY_UNKNOWN,
+                message=(f"Unknown search strategy: '{strategy_name}'. Available: {available}"),
+            )
 
-        # Hybrid search — single-table on Chunk (zero JOIN)
-        chunk_scores = hybrid_search(
+        logger.debug(
+            "dispatching search",
+            strategy=strategy_name,
+            query=query[:100],
+            knowledge_base_id=knowledge_base_id,
+        )
+
+        return impl.search(
             db,
             query=query,
-            query_embedding=query_embedding,
             knowledge_base_id=knowledge_base_id,
             top_k=top_k,
             document_ids=document_ids,
         )
-
-        if not chunk_scores:
-            return RetrievalQueryResponse(query=query, results=[])
-
-        # Re-rank
-        chunk_scores = rerank(chunk_scores)
-
-        # Batch-fetch documents for titles (top_k items, PK lookup)
-        doc_ids = {c.doc_id for c, _ in chunk_scores}
-        docs = _batch_fetch_documents(db, doc_ids=doc_ids)
-
-        # Build response with (Chunk, Document, score) for citations
-        results_with_docs = []
-        retrieval_chunks = []
-        for chunk, score in chunk_scores:
-            doc = docs.get(chunk.doc_id)
-            if doc is None:
-                continue
-            results_with_docs.append((chunk, doc, score))
-            retrieval_chunks.append(
-                RetrievalChunk(
-                    chunk_id=chunk.id,
-                    content=chunk.content,
-                    score=score,
-                    document_title=doc.title,
-                    citation=build_citations([(chunk, doc, score)])[0],
-                )
-            )
-
-        logger.info(
-            "retrieval completed",
-            query=query[:100],
-            knowledge_base_id=knowledge_base_id,
-            result_count=len(retrieval_chunks),
-        )
-
-        return RetrievalQueryResponse(query=query, results=retrieval_chunks)

@@ -56,9 +56,10 @@ async function request(path: string, options?: ApiOptions): Promise<RequestResul
   const response = await fetch(`${BASE_URL}${path}`, {
     ...fetchOptions,
     headers: {
-      ...(fetchOptions.method && fetchOptions.method !== "GET" && {
-        "Content-Type": "application/json",
-      }),
+      ...(fetchOptions.method &&
+        fetchOptions.method !== "GET" && {
+          "Content-Type": "application/json",
+        }),
       "X-Request-ID": requestId,
       ...getAuthHeader(),
       ...fetchOptions.headers,
@@ -67,7 +68,9 @@ async function request(path: string, options?: ApiOptions): Promise<RequestResul
   const rid = response.headers.get("X-Request-ID") || requestId;
   if (!response.ok) {
     dispatchUnauthorized(response.status, skipUnauthorizedHandler);
-    const err = await response.json().catch(() => ({ code: "NETWORK_ERROR", message: response.statusText }));
+    const err = await response
+      .json()
+      .catch(() => ({ code: "NETWORK_ERROR", message: response.statusText }));
     throw new ApiError(err.code, err.message, response.status, rid);
   }
   return { response, requestId: rid };

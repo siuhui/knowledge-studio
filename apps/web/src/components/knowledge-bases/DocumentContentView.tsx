@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { DocumentDetail } from "@/lib/types";
 import { StatusBadge } from "./StatusBadge";
-import { renderMarkdown } from "@/lib/markdown";
+import { MarkdownContent } from "@/components/ui/MarkdownContent";
 
 // ── Format badge ──
 
@@ -141,7 +141,7 @@ function ContentView({ document }: { document: DocumentDetail }) {
   const deduped = deduplicateChunks(document.chunks);
   // Merge raw deduped text without extra separator — the backend overlap
   // already inserts "\n" between chunks, so each deduped[i] (i>0) starts with "\n"
-  const mergedHtml = renderMarkdown(deduped.join(""));
+  const mergedText = deduped.join("");
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -161,20 +161,18 @@ function ContentView({ document }: { document: DocumentDetail }) {
                     Chunk #{chunk.chunk_index}
                   </span>
                 </div>
-                <div
+                <MarkdownContent
+                  content={chunk.content}
                   className="text-sm text-[#2F3437] leading-relaxed break-words"
-                  // biome-ignore lint/security/noDangerouslySetInnerHtml: content is sanitized by renderMarkdown
-                  dangerouslySetInnerHTML={{ __html: renderMarkdown(chunk.content) }}
                 />
               </div>
             </div>
           ))
         ) : (
           /* ── Reading view: single continuous, deduplicated text ── */
-          <div
+          <MarkdownContent
+            content={mergedText}
             className="text-sm text-[#2F3437] leading-relaxed break-words"
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: content is sanitized by renderMarkdown
-            dangerouslySetInnerHTML={{ __html: mergedHtml }}
           />
         )}
       </div>

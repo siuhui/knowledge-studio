@@ -8,6 +8,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None)
     content: str = Field(min_length=1, max_length=2000)
     reference_document_ids: list[str] | None = Field(default=None)
+    search_strategy: str = Field(default="agentic")
 
 
 class ChatResponse(BaseModel):

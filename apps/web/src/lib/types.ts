@@ -226,8 +226,26 @@ export interface UploadCompleteResponse {
 
 // ── Streaming events ──
 
+export type AgentProgressStatus = "listing" | "searching" | "reading" | "analyzing" | "error";
+
+export type AgentProgressEvent = {
+  type: "agent_progress";
+  status: AgentProgressStatus;
+  /** Number of documents found (listing) */
+  document_count?: number;
+  /** Search query text (searching) */
+  query?: string;
+  /** Number of matches found (searching) */
+  hits?: number;
+  /** Document title being read (reading) */
+  document_title?: string;
+  /** Whether the document was found (reading) */
+  found?: boolean;
+};
+
 export type StreamEvent =
   | { type: "session"; session_id: string; user_msg_id: string }
+  | AgentProgressEvent
   | { type: "token"; text: string }
   | { type: "citation"; citations: Citation[] }
   | { type: "done"; persisted: boolean; ai_message_id?: string }
