@@ -5,7 +5,7 @@ from app.core.errors import ConflictError, UnauthorizedError
 from app.core.response_codes import ResponseCode
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.models.user import User
-from app.repositories.user_repository import UserRepository
+from app.repositories.user import UserRepository
 
 logger = structlog.get_logger(__name__)
 

@@ -5,7 +5,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
 from app.models.source import Source
 from app.models.status_enums import SourceStatus
-from app.repositories.source_repository import SourceRepository
+from app.repositories.source import SourceRepository
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.object_storage import ObjectStorageService
 

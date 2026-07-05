@@ -18,9 +18,9 @@ from app.core.telemetry import observe, update_current_span
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.status_enums import DocumentStatus, IndexStageStatus
-from app.repositories.chunk_repository import ChunkRepository
-from app.repositories.document_index_status_repository import DocumentIndexStatusRepository
-from app.repositories.document_repository import DocumentRepository
+from app.repositories.chunk import ChunkRepository
+from app.repositories.document import DocumentRepository
+from app.repositories.document_index_status import DocumentIndexStatusRepository
 from app.services.embedding import embedder
 
 logger = structlog.get_logger(__name__)
@@ -203,20 +203,17 @@ def chunk_document(db: Session, *, document_id: str) -> int:
     index_status.chunk_status = IndexStageStatus.RUNNING
     db.flush()
 
-    # Chunk from persisted full_text (no re-parse needed)
+    # Chunk from persisted full_text (no reparse needed)
     chunk_texts = _chunk_text(document.full_text)
     if not chunk_texts:
         logger.warning("no chunks generated", document_id=document_id)
         chunk_texts = [document.full_text]  # fallback
-
-    kb_id = document.knowledge_base_id
 
     # Create Chunk records
     chunk_records = []
     for i, chunk_text in enumerate(chunk_texts):
         chunk = Chunk(
             doc_id=document_id,
-            knowledge_base_id=kb_id,
             chunk_index=i,
             content=chunk_text,
             token_count=_estimate_token_count(chunk_text),

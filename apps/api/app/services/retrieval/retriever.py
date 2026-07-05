@@ -1,31 +1,51 @@
 """Hybrid retrieval: pgvector semantic search + PostgreSQL full-text search, fused with RRF.
 
-Both paths query Chunk directly (single table) — knowledge_base_id is denormalized
-on Chunk to avoid JOINs in the retrieval hot path.
+Both paths query Chunk directly (single table).  knowledge_base_id is resolved
+on Document (not denormalized on Chunk) — doc_ids are scoped to the target KB
+before hitting the Chunk table, so no JOIN is needed in the hot path.
 """
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
+from app.repositories.document import DocumentRepository
+
+
+def _resolve_doc_ids(
+    db: Session,
+    *,
+    knowledge_base_id: str,
+    document_ids: list[str] | None = None,
+) -> list[str]:
+    """Resolve document IDs scoped to the target knowledge base.
+
+    None  — all documents in the KB
+    []    — no documents (empty)
+    [...] — filter to the intersection with KB doc IDs (prevents cross-KB leak)
+    """
+    if document_ids is not None and not document_ids:
+        return []
+    kb_doc_ids = DocumentRepository.list_ids_by_knowledge_base(db, knowledge_base_id=knowledge_base_id)
+    if document_ids is None:
+        return kb_doc_ids
+    doc_set = set(kb_doc_ids)
+    return [d for d in document_ids if d in doc_set]
 
 
 def _vector_search(
     db: Session,
     *,
     query_embedding: list[float],
-    knowledge_base_id: str,
+    doc_ids: list[str],
     top_k: int,
-    document_ids: list[str] | None = None,
 ) -> list[tuple[Chunk, float]]:
-    """Cosine similarity search via pgvector — single-table on Chunk."""
+    """Cosine similarity search via pgvector — single-table on Chunk with doc_ids IN filter."""
     q = (
         db.query(Chunk, Chunk.embedding.cosine_distance(query_embedding).label("score"))
-        .filter(Chunk.knowledge_base_id == knowledge_base_id)
+        .filter(Chunk.doc_id.in_(doc_ids))
         .filter(Chunk.embedding.is_not(None))
     )
-    if document_ids is not None:
-        q = q.filter(Chunk.doc_id.in_(document_ids))
     rows = q.order_by("score").limit(top_k * 2).all()
     return [(chunk, 1.0 - dist) for chunk, dist in rows]  # distance → similarity
 
@@ -34,11 +54,10 @@ def _keyword_search(
     db: Session,
     *,
     query: str,
-    knowledge_base_id: str,
+    doc_ids: list[str],
     top_k: int,
-    document_ids: list[str] | None = None,
 ) -> list[tuple[Chunk, float]]:
-    """PostgreSQL full-text search — single-table on Chunk."""
+    """PostgreSQL full-text search — single-table on Chunk with doc_ids IN filter."""
     q = (
         db.query(
             Chunk,
@@ -47,11 +66,9 @@ def _keyword_search(
                 func.plainto_tsquery("english", query),
             ).label("rank"),
         )
-        .filter(Chunk.knowledge_base_id == knowledge_base_id)
+        .filter(Chunk.doc_id.in_(doc_ids))
         .filter(func.to_tsvector("english", Chunk.content).match(query, postgresql_regconfig="english"))
     )
-    if document_ids is not None:
-        q = q.filter(Chunk.doc_id.in_(document_ids))
     rows = q.order_by(text("rank DESC")).limit(top_k * 2).all()
     return [(chunk, float(rank)) for chunk, rank in rows]
 
@@ -98,24 +115,14 @@ def hybrid_search(
     """Perform hybrid search and return fused results (chunk, score).
 
     document_ids:
-        None  — search all documents
+        None  — search all documents in the KB
         []    — no documents selected (return empty)
         [...] — filter to these documents
     """
-    if document_ids is not None and len(document_ids) == 0:
+    doc_ids = _resolve_doc_ids(db, knowledge_base_id=knowledge_base_id, document_ids=document_ids)
+    if not doc_ids:
         return []
-    vector_results = _vector_search(
-        db,
-        query_embedding=query_embedding,
-        knowledge_base_id=knowledge_base_id,
-        top_k=top_k,
-        document_ids=document_ids,
-    )
-    keyword_results = _keyword_search(
-        db,
-        query=query,
-        knowledge_base_id=knowledge_base_id,
-        top_k=top_k,
-        document_ids=document_ids,
-    )
+
+    vector_results = _vector_search(db, query_embedding=query_embedding, doc_ids=doc_ids, top_k=top_k)
+    keyword_results = _keyword_search(db, query=query, doc_ids=doc_ids, top_k=top_k)
     return rrf_fusion(vector_results, keyword_results, top_k=top_k)

@@ -1,20 +1,25 @@
 # 工程规范
 
+> **本文档是工程惯例的唯一信源**——负责"怎么干活"：目录结构、命名、路由、命令、代码规范、环境变量。
+> 架构设计见 @docs/architecture.md。数据模型见 @docs/data-model.md。产品需求见 @docs/prd.md。
+
 ## 1. 项目结构
 
 ```
 knowledge-base/
 ├── README.md
+├── CLAUDE.md                          # AI 助手指令（project-level）
 ├── .gitignore
 ├── docs/                              # 项目文档（事实源）
 │   ├── prd.md                         #   产品需求
 │   ├── data-model.md                  #   数据模型
+│   ├── architecture.md                #   架构与演进设计
 │   └── engineering-standards.md       #   本文件
 ├── apps/
 │   ├── api/                           # 后端 FastAPI
 │   │   ├── app/
 │   │   │   ├── __init__.py
-│   │   │   ├── main.py                #   应用入口 + lifespan
+│   │   │   ├── main.py                #   应用入口 + lifespan（startup/shutdown）
 │   │   │   ├── config.py              #   配置（pydantic-settings）
 │   │   │   ├── database.py            #   引擎 + session + Base
 │   │   │   ├── dependencies.py        #   FastAPI 依赖注入（get_db, get_current_user）
@@ -24,53 +29,85 @@ knowledge-base/
 │   │   │   │   ├── errors.py          #     异常层级
 │   │   │   │   ├── exceptions.py      #     全局异常处理器注册
 │   │   │   │   ├── security.py        #     JWT + bcrypt
-│   │   │   │   └── trace.py           #     请求追踪 ID + RequestIdMiddleware
+│   │   │   │   ├── trace.py           #     请求追踪 ID + RequestIdMiddleware
+│   │   │   │   ├── logging.py         #     structlog 设置
+│   │   │   │   └── telemetry.py       #     Langfuse v4 追踪（init/shutdown/observe）
 │   │   │   ├── models/                #   ORM 模型（一表一文件）
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── user.py
 │   │   │   │   ├── knowledge_base.py
 │   │   │   │   ├── source.py
 │   │   │   │   ├── document.py
-│   │   │   │   └── chunk.py
+│   │   │   │   ├── document_index_status.py
+│   │   │   │   ├── chunk.py
+│   │   │   │   ├── chat_session.py
+│   │   │   │   ├── chat_message.py
+│   │   │   │   └── status_enums.py    #     DocumentStatus, IndexStageStatus, SourceStatus
 │   │   │   ├── schemas/               #   Pydantic 请求/响应模型
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── common.py          #     ApiResponse[T] 泛型包装
+│   │   │   │   ├── common.py          #     ApiResponse[T] 泛型包装 + PaginatedResponse
 │   │   │   │   ├── auth.py
 │   │   │   │   ├── knowledge_base.py
 │   │   │   │   ├── source.py
-│   │   │   │   └── retrieval/         #   检索相关 schema（子包，防膨胀）
+│   │   │   │   ├── document.py
+│   │   │   │   ├── upload.py
+│   │   │   │   ├── chat.py            #     ChatRequest（含 search_strategy）, ChatResponse
+│   │   │   │   ├── session.py
+│   │   │   │   └── retrieval/         #   检索相关 schema（子包）
 │   │   │   │       ├── __init__.py
-│   │   │   │       ├── request.py
-│   │   │   │       ├── response.py
-│   │   │   │       └── citation.py
+│   │   │   │       ├── response.py    #     RetrievalQueryResponse, RetrievalChunk
+│   │   │   │       └── citation.py    #     Citation
 │   │   │   ├── repositories/          #   数据访问层
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── user_repository.py
-│   │   │   │   ├── knowledge_base_repository.py
-│   │   │   │   ├── source_repository.py
-│   │   │   │   ├── document_repository.py
-│   │   │   │   └── chunk_repository.py
+│   │   │   │   ├── user.py
+│   │   │   │   ├── knowledge_base.py
+│   │   │   │   ├── source.py
+│   │   │   │   ├── document.py
+│   │   │   │   ├── document_index_status.py
+│   │   │   │   ├── chunk.py
+│   │   │   │   ├── session.py
+│   │   │   │   └── message.py
 │   │   │   ├── services/              #   业务逻辑
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── auth_service.py
-│   │   │   │   ├── knowledge_base_service.py
-│   │   │   │   ├── source_service.py
-│   │   │   │   ├── document_service.py
-│   │   │   │   ├── indexing_service.py
-│   │   │   │   └── retrieval/         #   检索服务（子包，防膨胀）
+│   │   │   │   ├── auth.py            #     AuthService
+│   │   │   │   ├── knowledge_base.py  #     KnowledgeBaseService
+│   │   │   │   ├── source.py          #     SourceService
+│   │   │   │   ├── document.py        #     DocumentService
+│   │   │   │   ├── session.py         #     SessionService
+│   │   │   │   ├── chat.py            #     ChatService（send_message + stream_message）
+│   │   │   │   ├── llm.py             #     LLMProvider Protocol + OpenAIProvider + AnthropicProvider
+│   │   │   │   ├── embedding.py       #     OpenAIEmbedder
+│   │   │   │   ├── object_storage.py  #     ObjectStorageService（MinIO/S3）
+│   │   │   │   ├── agent/             #     Agent 运行时（自包含）
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── runner.py      #     AgentRunner（ReAct 循环）
+│   │   │   │   │   ├── types.py       #     AgentConfig, Tool, AgentResult, ToolResult
+│   │   │   │   │   ├── tools.py       #     search_keywords, read_document, list_documents
+│   │   │   │   │   └── configs.py     #     SEARCH_AGENT_CONFIG, GATHER_AGENT_CONFIG
+│   │   │   │   ├── indexing/          #    入库 pipeline
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── pipeline.py    #     run_index_pipeline（parse → chunk → embed）
+│   │   │   │   │   └── parser.py      #     PARSERS 注册表（PDF/MD/TXT）
+│   │   │   │   └── retrieval/         #   检索服务
 │   │   │   │       ├── __init__.py
-│   │   │   │       ├── retriever.py
-│   │   │   │       ├── reranker.py
+│   │   │   │       ├── service.py     #     RetrievalService（策略分发器）
+│   │   │   │       ├── retriever.py   #     hybrid_search（向量 + 关键词 + RRF）
+│   │   │   │       ├── reranker.py    #     identity pass（v0.1.0）
 │   │   │   │       ├── citation_builder.py
-│   │   │   │       └── service.py
+│   │   │   │       └── strategies/    #   检索策略实现
+│   │   │   │           ├── __init__.py  #   SearchStrategy Protocol + STRATEGIES registry
+│   │   │   │           ├── agentic.py   #   AgenticSearchStrategy（默认）
+│   │   │   │           └── hybrid.py    #   HybridSearchStrategy
 │   │   │   └── api/                   #   路由（薄层）
 │   │   │       ├── __init__.py
 │   │   │       ├── health.py
 │   │   │       ├── auth.py
 │   │   │       ├── knowledge_bases.py
 │   │   │       ├── sources.py
-│   │   │       ├── documents.py       #   上传 / 文档管理
-│   │   │       └── retrieval.py
+│   │   │       ├── uploads.py         #   presign + complete（scoped to Source）
+│   │   │       ├── documents.py
+│   │   │       ├── chat.py            #   sync + SSE streaming
+│   │   │       └── sessions.py
 │   │   ├── tests/
 │   │   │   ├── __init__.py
 │   │   │   ├── conftest.py
@@ -78,11 +115,13 @@ knowledge-base/
 │   │   │   │   ├── test_health.py
 │   │   │   │   ├── test_auth.py
 │   │   │   │   ├── test_knowledge_bases.py
-│   │   │   │   └── test_retrieval.py
+│   │   │   │   ├── test_sources.py
+│   │   │   │   ├── test_uploads.py
+│   │   │   │   ├── test_chat.py
+│   │   │   │   └── test_sessions.py
 │   │   │   ├── services/              #   服务测试
-│   │   │   │   └── test_knowledge_base_service.py
+│   │   │   │   └── test_agent_runner.py
 │   │   │   └── repositories/          #   仓库测试
-│   │   │       └── test_knowledge_base_repository.py
 │   │   ├── requirements.txt
 │   │   ├── requirements-dev.txt
 │   │   └── pyproject.toml             #   ruff + mypy + pytest 配置
@@ -92,17 +131,32 @@ knowledge-base/
 │       │   │   ├── layout.tsx
 │       │   │   ├── page.tsx
 │       │   │   ├── login/
+│       │   │   │   └── page.tsx
 │       │   │   ├── register/
+│       │   │   │   └── page.tsx
 │       │   │   └── knowledge-bases/
+│       │   │       ├── page.tsx
+│       │   │       └── [id]/
+│       │   │           ├── layout.tsx
+│       │   │           └── page.tsx         #   工作区（聊天 + 文档 + 会话管理）
 │       │   ├── components/            #   复用组件
-│       │   │   ├── ui/                #     基础 UI（Button, Input 等）
-│       │   │   └── layout/            #     布局组件（Navbar, Sidebar）
+│       │   │   ├── ui/                #     基础 UI（Button, Input, Modal, Toast 等）
+│       │   │   ├── layout/            #     布局组件（Navbar, Sidebar）
+│       │   │   └── knowledge-bases/   #     业务组件（KbCard, SessionBar, AddSourceModal 等）
 │       │   ├── hooks/                 #   自定义 hooks
+│       │   │   ├── useAuth.tsx
+│       │   │   ├── useToast.tsx
+│       │   │   ├── usePanelResize.ts
+│       │   │   └── useDocumentSelection.ts
 │       │   ├── lib/                   #   工具函数 + API client
-│       │   │   ├── api.ts             #     fetch 封装
+│       │   │   ├── api.ts             #     fetch 封装 + SSE streaming
 │       │   │   ├── auth.ts            #     token 管理
-│       │   │   └── types.ts           #     共享类型
+│       │   │   ├── sse.ts             #     SSE 流解析（parseSSEStream）
+│       │   │   ├── markdown.ts        #     markdown 渲染
+│       │   │   ├── logger.ts          #     前端日志
+│       │   │   └── types.ts           #     共享类型（StreamEvent, AgentProgressEvent 等）
 │       │   └── styles/
+│       │       └── globals.css
 │       ├── public/
 │       ├── package.json
 │       ├── tsconfig.json
@@ -119,71 +173,81 @@ knowledge-base/
 
 | 层 | 约定 | 示例 |
 |----|------|------|
-| 路由 | `名词复数.py` | `knowledge_bases.py`, `sources.py`, `documents.py` |
-| 服务 | `名词_service.py` 或 `子包/service.py` | `knowledge_base_service.py`, `retrieval/service.py` |
-| 仓库 | `名词_repository.py` | `knowledge_base_repository.py` |
-| 模型 | `名词单数.py` | `knowledge_base.py`, `user.py` |
-| schema | `名词单数.py` 或 `子包/` | `knowledge_base.py`, `retrieval/request.py` |
-| 测试 | 镜像 app 结构 | `api/test_auth.py`, `services/test_knowledge_base_service.py` |
+| 路由 | `名词复数.py` | `knowledge_bases.py`, `sources.py`, `sessions.py` |
+| 服务 | `名词.py` 或 `子包/`（省略 `_service` 后缀） | `auth.py`, `chat.py`, `retrieval/service.py` |
+| 仓库 | `名词.py`（省略 `_repository` 后缀） | `knowledge_base.py`, `session.py` |
+
+> **原则**：文件名省略分层后缀（`_service`, `_repository`）——目录已提供上下文。类名保留后缀（`AuthService`, `UserRepository`），确保 import 处自描述。
+
+| 模型 | `名词单数.py` | `knowledge_base.py`, `chat_session.py`, `user.py` |
+| schema | `名词单数.py` 或 `子包/` | `chat.py`, `session.py`, `retrieval/response.py` |
+| 测试 | 镜像 app 结构 | `api/test_chat.py`, `services/test_agent_runner.py` |
 | 前端页面 | 目录 + `page.tsx` | `knowledge-bases/page.tsx` |
 | 前端组件 | `PascalCase.tsx` | `Navbar.tsx`, `KnowledgeBaseCard.tsx` |
-| 前端 hooks | `useXxx.ts` | `useAuth.ts`, `useKnowledgeBases.ts` |
+| 前端 hooks | `useXxx.ts` | `useAuth.ts`, `usePanelResize.ts` |
 
 ### 2.2 路由
 
 ```
-GET    /health/live                        健康存活
-GET    /health/ready                       就绪检查
+GET    /api/v1/health                                        健康检查
 
-POST   /api/v1/auth/register              注册
-POST   /api/v1/auth/login                 登录
+POST   /api/v1/auth/register                                 注册
+POST   /api/v1/auth/login                                    登录
 
-GET    /api/v1/knowledge-bases                   列表
-POST   /api/v1/knowledge-bases                   创建
-GET    /api/v1/knowledge-bases/{id}              详情
-PATCH  /api/v1/knowledge-bases/{id}              更新
-DELETE /api/v1/knowledge-bases/{id}              删除
+GET    /api/v1/knowledge-bases                               列表
+POST   /api/v1/knowledge-bases                               创建
+GET    /api/v1/knowledge-bases/{id}                          详情
+PATCH  /api/v1/knowledge-bases/{id}                          更新
+DELETE /api/v1/knowledge-bases/{id}                          删除
+GET    /api/v1/knowledge-bases/{id}/documents                知识库文档列表
 
-POST   /api/v1/knowledge-bases/{id}/sources      创建数据源
-GET    /api/v1/knowledge-bases/{id}/sources      列表数据源
+POST   /api/v1/knowledge-bases/{kb_id}/sources               创建数据源
+GET    /api/v1/knowledge-bases/{kb_id}/sources               列表数据源
 
-POST   /api/v1/documents/upload/presign   获取上传预签名
-POST   /api/v1/documents/upload/complete  确认上传完成
-GET    /api/v1/documents/{id}             文档详情
+POST   /api/v1/sources/{id}/uploads/presign                  获取上传预签名
+POST   /api/v1/sources/{id}/uploads/complete                 确认上传完成 → 激活 source + 触发后台索引
+GET    /api/v1/sources/{id}/documents                        文档列表
+POST   /api/v1/sources/{id}/extract                          重新提取（从 MinIO 下载 + 重跑 pipeline）
+DELETE /api/v1/sources/{id}                                  删除数据源（含 MinIO 对象 + 级联文档）
 
-POST   /api/v1/retrieval/query            检索
-POST   /api/v1/qa/ask                      RAG 问答
+GET    /api/v1/documents/{id}/chunks                         文档切片列表
+DELETE /api/v1/documents/{id}                                删除文档
+
+POST   /api/v1/chat/messages                                 同步问答（RAG）
+POST   /api/v1/chat/messages/stream                          SSE 流式问答
+
+GET    /api/v1/knowledge-bases/{kb_id}/sessions              会话列表
+POST   /api/v1/knowledge-bases/{kb_id}/sessions              创建会话
+GET    /api/v1/knowledge-bases/{kb_id}/sessions/{id}          会话详情（含消息）
+PATCH  /api/v1/knowledge-bases/{kb_id}/sessions/{id}          更新会话
+DELETE /api/v1/knowledge-bases/{kb_id}/sessions/{id}          删除会话
 ```
 
 ### 2.3 数据库
 
 | 约定 | 示例 |
 |------|------|
-| 表名 | 蛇形小写单数 | `user`, `knowledge_base`, `document`, `chunk` |
+| 表名 | 蛇形小写单数 | `user`, `knowledge_base`, `document`, `chunk`, `chat_session` |
 | 主键 | `id`，UUID 字符串 | `mapped_column(String(36), primary_key=True, default=uuid4)` |
-| 外键 | `{entity}_id` | `knowledge_base_id`, `source_id`, `doc_id` |
-| 时间戳 | `created_at`, `updated_at` | 带 `onupdate` |
+| 外键 | `{entity}_id` | `knowledge_base_id`, `source_id`, `doc_id`, `session_id` |
+| 时间戳 | `created_at`, `updated_at` | 带 `server_default=func.now()` + Python `onupdate` |
 
 ### 2.4 Schema 管理
 
 | 阶段 | 方式 | 说明 |
 |------|------|------|
-| v0.x（开发） | `Base.metadata.create_all()` | 配置开关 `KB_AUTO_CREATE_TABLES=true`，每次启动自动重建 |
+| v0.x（开发） | `Base.metadata.create_all()` | 配置开关 `KB_AUTO_CREATE_TABLES=true`，每次启动自动创建 |
 | v1.0（上线） | Alembic | Schema 稳定、有真实数据后引入迁移管理 |
 
-启动时由 `config.py` 控制：
+启动时由 `main.py` lifespan 控制：
 
 ```python
-# config.py
-auto_create_tables: bool = True  # v0.x dev mode
-
 # main.py lifespan
 if settings.auto_create_tables:
-    Base.metadata.create_all(bind=engine)
-    # 确保 pgvector 扩展已启用
     with engine.connect() as conn:
         conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {settings.database.pg_vector_extension}"))
         conn.commit()
+    Base.metadata.create_all(bind=engine)
 ```
 
 ---
@@ -240,7 +304,7 @@ feat: add auth register and login endpoints
 - 文档 / 注释 / 用户可见消息 → `v0.1.0`（人读，加 `v` 前缀）
 - Git tag → `v0.1.0`
 
-示例：`0.1.0`（首个 MVP）→ `0.2.0`（新增 GitHub/URL 数据源）→ `0.2.1`（修一个检索 bug）→ `1.0.0`（API 稳定）。
+示例：`0.1.0`（首个 MVP）→ `0.2.0`（新增 Web Search + Git 仓库同步 + 评测体系）→ `0.2.1`（修一个检索 bug）→ `1.0.0`（API 稳定）。
 
 ---
 
@@ -260,7 +324,7 @@ uvicorn app.main:app --reload --port 8000
 
 # 测试
 pytest                              # 全部
-pytest tests/api/test_auth.py       # 单文件
+pytest tests/api/test_chat.py       # 单文件
 pytest -m "not slow"                # 跳过慢测试
 pytest --tb=short                   # 简短回溯
 
@@ -329,7 +393,7 @@ open http://localhost:8000/redoc    # ReDoc
 
 - **导入路径**：`from app.config import settings`，模块级单例，全项目直接引用
 - **环境变量前缀**：`KB_`，嵌套字段用 `__` 展开（如 `KB_DATABASE__URL` → `settings.database.url`）
-- **配置分组**：按领域拆嵌套类（`DatabaseConfig` / `JWTConfig` / `LLMConfig` / `ObjectStorageConfig`），不在平铺类堆字段
+- **配置分组**：按领域拆嵌套类（`DatabaseConfig` / `JWTConfig` / `LLMConfig` / `EmbeddingConfig` / `ObjectStorageConfig` / `TelemetryConfig`），不在平铺类堆字段
 - **无默认值**：必填字段声明时不带 `=`，缺失则启动时报错；基础设施类字段（如 `auto_create_tables`）是例外
 - **敏感字段**：用 `pydantic.SecretStr`，取值需调用 `.get_secret_value()`
 - **环境隔离**：通过 `KB_ENV` 字段区分（`dev` / `test` / `prod`），启动时 `@field_validator` 校验
@@ -343,7 +407,7 @@ api/           → 参数提取、调用 service、包装 ApiResponse。禁止�
 services/      → 业务逻辑、调 repository、调外部 API。禁止：直接操作 HTTP 请求对象
 repositories/  → 数据访问、封裝 SQLAlchemy 查询。禁止：业务判断
 models/        → ORM 映射。禁止：任何逻辑
-core/           → 基础设施。禁止：引用 models / services / repositories
+core/           → 基础设施（含 telemetry）。禁止：引用 models / services / repositories
 ```
 
 调用方向：`api → service → repository → db`
@@ -398,21 +462,34 @@ Content-Type: application/json
 
 理由：`request_id` 是协议级元数据（和 `Content-Type`、`ETag` 同类），不是业务数据。AWS、Stripe、GitHub 都是这个做法。后续接入 OpenTelemetry 时可直接加 `traceparent` 头而不改 Body。
 
-**中间件实现**（类式 BaseHTTPMiddleware）：
+**中间件实现**（纯 ASGI，兼容 OpenTelemetry）：
 
 ```python
 # core/trace.py
 import uuid
-from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        return response
+class RequestIdMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        request_id = headers.get(b"x-request-id", str(uuid.uuid4()).encode()).decode()
+        scope["state"] = {"request_id": request_id}
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers_list = list(message.get("headers", []))
+                headers_list.append((b"x-request-id", request_id.encode()))
+                message["headers"] = headers_list
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 ```
 
 注册：
@@ -505,8 +582,8 @@ def get_logger(name: str):
 **在中间件里绑定 `request_id`**：
 
 ```python
-# core/trace.py — RequestIdMiddleware.dispatch()
-request.state.request_id = request_id
+# core/trace.py — RequestIdMiddleware
+scope["state"] = {"request_id": request_id}
 structlog.contextvars.bind_contextvars(request_id=request_id)
 # ... 请求结束后 structlog.contextvars.unbind_contextvars("request_id")
 ```
@@ -527,7 +604,7 @@ def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_
 
 | 位置 | 记什么 |
 |------|--------|
-| `main.py` lifespan | 服务启动/停止、表创建 |
+| `main.py` lifespan | 服务启动/停止、表创建、telemetry 初始化 |
 | `api/` 层 | 请求进入/完成（由中间件统一记，不在路由里手写 `logger.info`） |
 | `services/` 层 | 业务关键事件：创建/删除/状态变更、外部调用耗时 |
 | `repositories/` 层 | **不记日志**（纯数据访问，异常由 service 层处理） |
@@ -629,8 +706,34 @@ export async function api<T>(path: string, options?: RequestInit): Promise<{ dat
   }
   return { data: (await res.json()).data as T, requestId: rid };
 }
+```
 
-### 6.4 状态管理
+### 6.4 SSE 流式调用
+
+SSE 流通过 `lib/api.ts` 的 `sendMessageStream()` 和 `lib/sse.ts` 的 `parseSSEStream()` 处理：
+
+```ts
+// lib/sse.ts
+export async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  // ... buffer + parse logic, yield parsed JSON events
+}
+
+// 使用
+const stream = sendMessageStream({ knowledge_base_id, content, search_strategy: "agentic" });
+for await (const event of parseSSEStream(stream)) {
+  switch (event.type) {
+    case "agent_progress": /* show agent steps */ break;
+    case "token": /* append text */ break;
+    case "citation": /* add sources */ break;
+    case "done": /* finalize */ break;
+  }
+}
+```
+
+### 6.5 状态管理
 
 - Token 存 `localStorage`
 - 用户状态用 React Context（`AuthProvider`）
@@ -659,10 +762,21 @@ export async function api<T>(path: string, options?: RequestInit): Promise<{ dat
 | `KB_LLM__API_KEY` | — | API 密钥（必填） |
 | `KB_LLM__BASE_URL` | — | API 代理地址（可选） |
 | `KB_LLM__CHAT_MODEL` | `gpt-4o-mini` | 对话模型 |
-| `KB_LLM__EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding 模型 |
-| `KB_LLM__EMBEDDING_DIMENSION` | `1536` | 向量维度（需与 pgvector 一致） |
+| `KB_EMBEDDING__API_KEY` | — | Embedding API 密钥 |
+| `KB_EMBEDDING__BASE_URL` | — | Embedding API 代理地址（可选） |
+| `KB_EMBEDDING__MODEL` | `text-embedding-v4` | Embedding 模型 |
+| `KB_EMBEDDING__DIMENSION` | `1024` | 向量维度（需与 pgvector 一致） |
 | `KB_JWT__SECRET` | `dev-secret-change-me` | JWT 签名密钥 |
 | `KB_JWT__EXPIRY_MINUTES` | `1440` | Token 有效期（默认 24h） |
+| `KB_OBJECT_STORAGE__ENDPOINT` | — | MinIO/S3 endpoint |
+| `KB_OBJECT_STORAGE__ACCESS_KEY` | — | Access key |
+| `KB_OBJECT_STORAGE__SECRET_KEY` | — | Secret key |
+| `KB_OBJECT_STORAGE__BUCKET` | — | Bucket 名称 |
+| `KB_OBJECT_STORAGE__REGION` | — | Region |
+| `KB_TELEMETRY__ENABLED` | `false` | 启用 Langfuse 追踪 |
+| `KB_TELEMETRY__LANGFUSE_SECRET_KEY` | — | Langfuse secret key |
+| `KB_TELEMETRY__LANGFUSE_PUBLIC_KEY` | — | Langfuse public key |
+| `KB_TELEMETRY__LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse 地址 |
 | `KB_CORS_ORIGINS` | `["http://localhost:3000"]` | 跨域白名单 |
 
 前端（`apps/web/`）：
@@ -715,6 +829,7 @@ app/
 - Docker 容器化
 - 前端状态管理方案（SWR / TanStack Query）
 - E2E 测试方案（Playwright）
+- 评测体系（retrieval eval + LLM-as-Judge）
 
 ---
 
@@ -753,7 +868,7 @@ PARSERS: dict[str, Parser] = {
 |------|------|------|
 | PDF | **PyMuPDF (fitz)** | `pip install PyMuPDF`；纯 C 实现，提取质量高，无系统依赖 |
 | Markdown | **自写 parser** | 去 frontmatter、图片链接，保留标题层级（标题对后续 chunk 有价值）。不需要 `markdown-it-py` 转 HTML——从 Markdown 到纯文本的信息损失可以接受 |
-| Plain Text | **自写** | UTF-8 → GB18030 回退解码；编码检测用 `charset-normalizer`（`pip install charset-normalizer`）
+| Plain Text | **自写** | UTF-8 → GB18030 回退解码；编码检测用 `charset-normalizer`（`pip install charset-normalizer`） |
 
 #### v0.1.0 明确不支持
 
@@ -784,35 +899,25 @@ class Embedder(Protocol):
     def dimension(self) -> int: ...
 ```
 
-- 默认：OpenAI `text-embedding-3-small`（1536 维）或 Anthropic 对应模型
+- 默认：OpenAI 兼容 API（`text-embedding-v4`，1024 维），可切换为 Anthropic 对应模型或其他兼容服务
 - 通过抽象层可配置切换，换模型只改配置 + DDL 向量维度
 - 不在 v0.1.0 引入本地模型（sentence-transformers 需要 GPU 才实用，CPU 批处理 100 页偏慢且占内存）
+- Langfuse 自动追踪（`langfuse.openai`）
 
 ### 10.5 检索（Retrieval）
 
-**pgvector 裸用 + PostgreSQL tsvector，RRF 融合**。不加 Elasticsearch / Meilisearch / Pinecone。
+**策略模式**，默认 agentic，可选 hybrid。不加 Elasticsearch / Meilisearch / Pinecone。
+
+> 策略设计与架构决策见 @docs/architecture.md §四。
+
+#### Hybrid（可选）
+
+pgvector 向量 + tsvector 关键词 + RRF 融合：
 
 ```
 向量检索：ORDER BY embedding <=> query_embedding LIMIT 20
 关键词：  WHERE to_tsvector('english', content) @@ plainto_tsquery('english', query)
 融合：    Reciprocal Rank Fusion，Python 里 ~10 行
-```
-
-```python
-def hybrid_search(db, query: str, query_emb: list[float], top_k: int = 10):
-    # 向量检索
-    vec = await db.execute(
-        select(Chunk, Chunk.embedding.cosine_distance(query_emb).label("dist"))
-        .order_by("dist").limit(top_k * 2)
-    )
-    # 关键词检索
-    kw = await db.execute(
-        select(Chunk, func.ts_rank(to_tsvector(Chunk.content),
-             plainto_tsquery(query)).label("rank"))
-        .where(to_tsvector(Chunk.content).match(query))
-        .order_by("rank").limit(top_k * 2)
-    )
-    return rrf_fusion(vec.all(), kw.all(), top_k=top_k)
 ```
 
 ### 10.6 依赖清单（v0.1.0 新增）
@@ -821,6 +926,7 @@ def hybrid_search(db, query: str, query_emb: list[float], top_k: int = 10):
 PyMuPDF                  # PDF 解析
 charset-normalizer       # 文本编码检测
 openai / anthropic       # LLM + Embedding API
+langfuse                 # LLM 调用 + 检索全链路追踪
 # 无 RAG 框架
 # 无外部检索中间件
 ```

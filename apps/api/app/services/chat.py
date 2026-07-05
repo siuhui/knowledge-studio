@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.core.telemetry import get_current_trace_id, observe, trace_context, update_current_span
 from app.models.chat_message import ChatMessage
-from app.repositories.message_repository import MessageRepository
-from app.repositories.session_repository import SessionRepository
+from app.repositories.message import MessageRepository
+from app.repositories.session import SessionRepository
 from app.schemas.chat import ChatResponse
 from app.schemas.retrieval.citation import Citation
 from app.schemas.retrieval.response import RetrievalQueryResponse

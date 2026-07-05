@@ -1,7 +1,7 @@
 [project]
 name = "knowledgebase-api"
 version = "0.1.0"
-description = "KnowledgeBase API — local knowledge retrieval and AI analysis"
+description = "KnowledgeBase API — knowledge retrieval and AI analysis"
 requires-python = ">=3.12"
 
 [tool.ruff]

@@ -7,8 +7,8 @@ from app.core.errors import NotFoundError
 from app.core.response_codes import ResponseCode
 from app.models.chunk import Chunk
 from app.models.document import Document
-from app.repositories.chunk_repository import ChunkRepository
-from app.repositories.document_repository import DocumentRepository
+from app.repositories.chunk import ChunkRepository
+from app.repositories.document import DocumentRepository
 from app.services.knowledge_base import KnowledgeBaseService
 from app.services.source import SourceService
 

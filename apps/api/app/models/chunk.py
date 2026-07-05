@@ -16,7 +16,6 @@ class Chunk(Base):
     doc_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("document.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     chunk_index: Mapped[int] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(nullable=False)

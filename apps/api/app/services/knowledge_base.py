@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.response_codes import ResponseCode
 from app.models.knowledge_base import KnowledgeBase
-from app.repositories.knowledge_base_repository import KnowledgeBaseRepository
+from app.repositories.knowledge_base import KnowledgeBaseRepository
 
 logger = structlog.get_logger(__name__)
 

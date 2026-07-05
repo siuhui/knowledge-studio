@@ -1,5 +1,8 @@
 # KnowledgeBase — 架构与演进设计
 
+> **本文档是架构设计决策的唯一信源**——负责"为什么这样设计"和"未来怎么演进"。
+> 数据模型见 @docs/data-model.md。工程惯例与命令见 @docs/engineering-standards.md。产品需求见 @docs/prd.md。
+
 ---
 
 ## 目录
@@ -27,7 +30,7 @@ api/            → 薄层：提取参数，调用 service，包装 ApiResponse[
 services/       → 业务逻辑：编排 repository，调外部 API
 repositories/   → 数据访问：封装 SQLAlchemy 查询
 models/         → ORM 映射：纯表定义，无逻辑
-core/           → 横切：config, errors, security, logging, trace
+core/           → 横切：config, errors, security, logging, trace, telemetry
 ```
 
 调用方向：`api → service → repository → db`。所有 service 和 repository 类使用静态方法。
@@ -38,9 +41,13 @@ core/           → 横切：config, errors, security, logging, trace
 User ──1:N──> KnowledgeBase ──1:N──> Source ──1:N──> Document ──1:N──> Chunk
                                             │                      │
                                      ChatSession ──1:N──> ChatMessage
+
+Document ──1:1──> DocumentIndexStatus
 ```
 
-5 张核心表（+ session/message 共 8 张）。`document.text_hash`（SHA-256）用于去重。`chunk.embedding` 为 nullable pgvector Vector。`document_index_status` 是 Document 的 1:1 扩展表，追踪 chunk/embed 生命周期。
+9 张表。`document.text_hash`（SHA-256）用于去重。`chunk.embedding` 为 nullable pgvector Vector。`document_index_status` 是 Document 的 1:1 扩展表，追踪 chunk/embed 生命周期。
+
+> 完整字段定义见 @docs/data-model.md。
 
 ### 1.3 入库 pipeline
 
@@ -54,18 +61,18 @@ upload → MinIO presigned POST → /complete → background index pipeline:
 ### 1.4 检索与问答
 
 ```
-Chat: embed(query) → hybrid_search (vector + keyword + RRF) → rerank → build_context → LLM answer
+Chat: agentic_search (LLM + PostgreSQL FTS, 默认) 或 hybrid_search (vector + keyword + RRF) → build_context → LLM answer (同步 / SSE streaming)
 ```
 
-### 1.5 当前约束（v0.1.0 Phase 1 完成后）
+### 1.5 当前约束（v0.1.0 Phase 2 完成后）
 
 | 项目 | 状态 |
 |------|------|
-| 信息来源 | 仅文件上传（PDF/MD/TXT） |
-| 检索策略 | API 层仍为 hybrid（必须 embedding）；agentic 运行时已就绪（`services/agent/`），待 Phase 2 接入 |
-| Chunk + Embed | 入库必做，不可跳过 |
-| 产出物 | 无，纯问答 |
-| 用户选择 | 无策略切换（Phase 2 加入 `ChatRequest.search_strategy`） |
+| 信息来源 | 文件上传（PDF/MD/TXT）+ URL 导入 |
+| 检索策略 | agentic 为默认（零 embedding）；hybrid 可选。`ChatRequest.search_strategy` 已接入 |
+| Chunk + Embed | 入库必做（待改为按需触发，当前 hybrid 依赖 chunk，agentic 不依赖） |
+| 产出物 | 问答 + 研究报告 + PPT |
+| 用户选择 | 前端待加策略切换 UI（`search_strategy` 字段已就绪，API 层支持） |
 
 ---
 
@@ -87,7 +94,7 @@ v0.1.0 完成态
   信息来源                检索                        消费
   ───────                ────                        ────
   upload (已有)    ┌─ agentic (NEW, 默认)      Chat 问答 (已有)
-                   └─ hybrid  (已有, 可选)     Studio 报告 (NEW)
+  URL 导入 (NEW)   └─ hybrid  (已有, 可选)     Studio 报告 (NEW)
 
   入库 pipeline (已有, 保留)
     parse → chunk → embed
@@ -97,21 +104,21 @@ v0.1.0 完成态
 
 | 决策 | 理由 |
 |------|------|
-| **保留现有 chunk+embed pipeline 不变** | agentic 不依赖 chunk/embed，两条线独立演进。拆 pipeline 留给 v0.2.0 |
+| **保留现有 chunk+embed pipeline 不变** | agentic 不依赖 chunk/embed，两条线独立演进；本版本加按需触发入口，拆 pipeline 留给 v0.2.0 |
 | **agentic 做默认策略** | 零 embedding 调用 |
 | **hybrid 保留为可选** | 对已有 embed 的文档提供高精度语义搜索 |
-| **Studio 先做报告，不做 PPT** | 报告是最高频需求，markdown 输出验证整个 workflow，PPT 在 v0.2.0 扩展 |
+| **Studio 先做报告，再做 PPT** | 报告是最高频需求，markdown 输出验证整个 workflow，PPT 紧跟其后 |
 | **Agent 运行时独立于检索和 Studio** | 同一个 AgentRunner 被两者复用，`AgentRunner` 本身是业务无关的 |
+| **chunk+embed 可按需触发** | 入库只做 parse，用户选择用 hybrid 时才跑 chunk+embed（Phase 3 待实现，当前入库仍跑全 pipeline） |
 
 ### 2.4 不入 v0.1.0 的东西
 
 | 项目 | 何时做 | 原因 |
 |------|--------|------|
-| web_page/web_search/media_crawler 爬虫 | v0.2.0 | 信息来源扩展需独立设计调度层 |
+| web_search / media_crawler | v0.2.0 | 信息来源扩展需独立设计调度层 |
 | mixed 检索策略 | v0.2.0 | 依赖 agentic + hybrid 先稳定 |
-| PPT 生成 | v0.2.0 | 先用 markdown 验证 workflow 可行 |
-| chunk+embed 可选化 | v0.2.0 | 需要 embedding job 和触发 UI |
 | 并行 tool calls | v0.2.0 | 依赖 LLM provider 的 native parallel tool calling |
+| 评测体系 | v0.2.0 | 先让功能可用，再系统化评测 |
 
 ---
 
@@ -357,7 +364,7 @@ search_keywords = Tool(
         "properties": {
             "query": {
                 "type": "string",
-                "description": "搜索词或短语。支持 PostgreSQL tsquery 语法（& 表示 AND，| 表示 OR）",
+                "description": "搜索词或短语。普通文本即可，无需特殊语法",
             },
             "document_ids": {
                 "type": "array", "items": {"type": "string"},
@@ -432,11 +439,18 @@ SEARCH_AGENT_CONFIG = AgentConfig(
     system_prompt="""\
 You are a research assistant searching a knowledge base to answer questions.
 
+IMPORTANT — Document IDs are UUIDs:
+  Every document has a UUID like '550e8400-e29b-41d4-a716-446655440000'.
+  You can only obtain valid UUIDs from list_documents() or search_keywords() results.
+  Never pass a document title, filename, or any string that is not a UUID
+  to read_document() or search_keywords()'s document_ids parameter.
+
 Workflow:
-1. Start with search_keywords() to find relevant documents
-2. For promising snippets, use read_document() to get full context
-3. Cross-validate with additional searches from different angles
-4. When you have enough information, give a final answer with citations
+1. Call list_documents() first to discover available documents and their UUIDs
+2. Use search_keywords() to find relevant passages — note the UUIDs in results
+3. Use read_document() with the exact UUID from step 1 or 2 to get full context
+4. Cross-validate with additional searches from different angles
+5. When you have enough information, give a final answer with citations
 
 Stop when you can fully answer the question, or after searching from 2-3 different angles.
 Do NOT stop after the first search — always verify with at least one cross-check.""",
@@ -693,7 +707,7 @@ services/studio/              # NEW
   types.py                    # ReportConfig, ReportResult, OutputFormat
   templates/
     report.py                 # ReportWorkflow: plan → gather → generate → assemble → store
-    ppt.py                    # PPTWorkflow（骨架，v0.2.0 完整实现）
+    ppt.py                    # PPTWorkflow
   generators/
     markdown.py               # Markdown 拼接 + 格式化
 ```
@@ -870,7 +884,7 @@ ChatService                          StudioTaskRunner
 | 优化 | v0.1.0 | 说明 |
 |------|--------|------|
 | **段落感知边界** | ✅ | token 切到边界时回退到最近的段落/句子边界 |
-| **结构化元素保护** | ✅ | 标题层级（`#` / `##`）、代码块（`` ``` ``）、表格：不跨边界切分 |
+| **结构化元素保护** | 📋 Phase 3 | 标题层级（`#` / `##`）、代码块（`` ``` ``）、表格：不跨边界切分 |
 | Semantic chunking | v0.2.0 | 用 embedding 判断相邻段落语义相似度 |
 | Agentic chunking | v0.2.0 | 用 LLM 按语义单元切分 |
 | Adaptive sizing | v0.2.0 | 根据文档类型和标题层级调整 chunk 大小 |
@@ -959,11 +973,10 @@ v0.1.0 打通基本流程后，v0.2.0 做以下扩展：
 
 | 模块 | 内容 |
 |------|------|
-| **信息来源** | `web_page` 单页抓取 + `web_search` 搜索源 + `media_crawler` 站点爬虫 + APScheduler 定时调度 |
-| **Pipeline** | chunk + embed 按需触发（独立 `POST /kb/{id}/embed`），入库只做 parse |
+| **信息来源** | Web Search + Git 仓库同步 |
 | **检索策略** | `mixed`（agent 缩范围 + hybrid 精确搜）+ query 重写 |
 | **Agent** | 并行 tool calls、Memory、System prompt 持续优化 |
-| **Studio** | PPT 生成（`python-pptx`）、数据分析、思维导图、流式预览、单章重生成 |
+| **Studio** | 数据分析、思维导图、流式预览、单章重生成 |
 | **评测** | CI 集成评测、Leaderboard |
 
 ---
@@ -976,24 +989,27 @@ Phase 1: Agent 运行时 ✅ 已完成
   ── LLMProvider 扩展 generate_with_tools()
   ── 单元测试: runner 循环 / tool 执行 / 早停 (27 tests, 12/12 pass without DB)
 
-Phase 2: 检索策略层
+Phase 2: 检索策略层 ✅ 已完成
   ── strategies/ (__init__.py, agentic.py, hybrid.py)
-  ── RetrievalService 改为分发器
+  ── RetrievalService 改为分发器，DEFAULT_STRATEGY="agentic"
   ── ChatRequest 加 search_strategy，ChatService 透传
-  ── SSE 事件扩展（thought / tool_call / tool_result）
+  ── SSE 事件扩展（agent_progress: listing/searching/reading/analyzing/error）
+  ── 前端 SSE 客户端（parseSSEStream + 工作区 agent 步骤展示）
 
-Phase 3: Studio 报告
+Phase 3: v0.1.0 剩余
+  ── URL 导入（新增 Source type=url，HTTP 抓取 → parse → index）
   ── StudioTask 模型 + repository + schema
-  ── services/studio/ (runner.py, types.py, templates/report.py, generators/markdown.py)
+  ── services/studio/ (runner.py, types.py, templates/report.py, generators/markdown.py, generators/pptx.py)
+  ── chunk+embed 按需触发（入库只做 parse，用户选 hybrid 时才跑）
+  ── PPT 生成（python-pptx）
+  ── Chunk: 结构化元素保护（标题、代码块、表格不跨边界切分）
   ── BackgroundTasks 执行 + 前端轮询进度
   ── Studio API (create / status / download / list / delete)
   前端: StrategySelector + StudioPanel + TaskCard
 
-Phase 4: 优化
-  ── Chunk: 段落感知边界 + 结构化元素保护
-  ── Agent 优化: 早停 + Tool 摘要（✅ Phase 1 已内建）
-
-Phase 5: 评测
+Phase 4: v0.2.0
+  ── Web Search
+  ── Git 仓库同步
   ── tests/eval/ (test_set.py, retrieval_eval.py, answer_eval.py)
   ── 评测结果汇总脚本
 ```
@@ -1002,209 +1018,48 @@ Phase 5: 评测
 
 ---
 
-## 附录：完整目录结构
+## 附录：v0.1.0 新增/修改文件清单
 
-### v0.1.0 完成态
+> 当前完整目录结构见 @docs/engineering-standards.md。
 
-```
-apps/api/app/
-  main.py                               # 注册: +studio router
-  config.py                             # 不变
-  database.py                           # 不变
-  dependencies.py                       # 不变
-
-  models/
-    user.py                             # 不变
-    knowledge_base.py                   # 不变
-    source.py                           # 不变
-    document.py                         # 不变
-    document_index_status.py            # 不变
-    chunk.py                            # 不变
-    chat_session.py                     # 不变
-    chat_message.py                     # 不变
-    studio_task.py                      # NEW
-    status_enums.py                     # 扩展: SearchStrategy, StudioTaskType
-
-  schemas/
-    common.py                           # 不变
-    auth.py, knowledge_base.py          # 不变
-    source.py, upload.py, document.py   # 不变
-    chat.py                             # 改: 加 search_strategy
-    session.py                          # 不变
-    retrieval/citation.py               # 不变
-    retrieval/response.py              # 不变
-    studio.py                           # NEW
-    search.py                           # NEW: SearchStrategy enum
-
-  api/
-    health.py                           # 不变
-    auth.py                             # 不变
-    knowledge_bases.py                  # 不变
-    sources.py                          # 不变
-    uploads.py                          # 不变
-    documents.py                        # 不变
-    chat.py                             # 改: 透传 search_strategy
-    sessions.py                         # 不变
-    studio.py                           # NEW
-
-  services/
-    auth.py, knowledge_base.py          # 不变
-    source.py, document.py             # 不变
-    session.py                          # 不变
-    chat.py                             # 改: 接收 search_strategy 参数
-    llm.py                              # 改: 加 generate_with_tools
-    embedding.py                        # 不变
-    object_storage.py                   # 不变
-
-    agent/                              # NEW — Agent 运行时
-      __init__.py                       # 公开: AgentRunner, AgentConfig, Tool, AgentResult
-      runner.py                         # AgentRunner: ReAct 循环
-      types.py                          # AgentConfig, AgentStep, AgentResult, ToolResult, Tool
-      tools.py                          # search_keywords, read_document, list_documents
-      configs.py                        # SEARCH_AGENT_CONFIG, GATHER_AGENT_CONFIG
-
-    indexing/
-      __init__.py                       # 不变
-      pipeline.py                       # 不变（保留 chunk+embed）
-      parser.py                         # 不变
-
-    retrieval/
-      __init__.py                       # 不变
-      service.py                        # 改: 策略分发器，DEFAULT_STRATEGY="agentic"
-      retriever.py                      # 不变（keyword_search + vector_search）
-      reranker.py                       # 不变
-      citation_builder.py               # 不变
-      strategies/                       # NEW
-        __init__.py                     # SearchStrategy Protocol + STRATEGIES registry
-        agentic.py                      # AgenticSearchStrategy (AgentRunner + keyword tools)
-        hybrid.py                       # HybridSearchStrategy (现有逻辑搬迁)
-
-    studio/                             # NEW
-      __init__.py
-      runner.py                         # StudioTaskRunner: 接收 task，执行 workflow
-      types.py                          # ReportConfig, ReportResult, OutputFormat
-      templates/
-        report.py                       # ReportWorkflow (plan→gather→generate→assemble→store)
-        ppt.py                          # PPTWorkflow (骨架)
-      generators/
-        markdown.py                     # Markdown 拼接 + 格式化
-
-  repositories/
-    # 现有 8 个: user, knowledge_base, source, document,
-    #            document_index_status, chunk, session, message
-    studio_task_repository.py           # NEW
-
-  core/
-    errors.py                           # 不变
-    response_codes.py                   # 扩展: 加 Studio 相关错误码
-    exceptions.py                       # 不变
-    logging.py                          # 不变
-    trace.py                            # 不变
-    security.py                         # 不变
-
-  tests/
-    conftest.py                         # 不变
-    api/
-      test_health.py                    # 不变
-      test_auth.py                      # 不变
-      test_knowledge_bases.py           # 不变
-      test_sources.py                   # 不变
-      test_uploads.py                   # 不变
-      test_chat.py                      # 扩展: 策略选择
-      test_sessions.py                  # 不变
-      test_studio.py                    # NEW
-    services/
-      test_agent_runner.py              # NEW: AgentRunner 单元测试
-    eval/                               # NEW
-      __init__.py
-      test_set.py                       # 测试集定义
-      retrieval_eval.py                 # 检索指标
-      answer_eval.py                    # LLM-as-Judge
-      results/                          # 评测结果输出
-
-apps/web/src/
-  app/
-    layout.tsx                          # 不变
-    page.tsx                            # 不变
-    login/page.tsx                      # 不变
-    register/page.tsx                   # 不变
-    knowledge-bases/
-      page.tsx                          # 不变
-      [id]/
-        layout.tsx                      # 不变
-        page.tsx                        # 扩展: 加策略选择器
-    studio/                             # NEW
-      page.tsx                          # Studio 任务列表
-
-  components/
-    layout/                             # Navbar, Sidebar — 不变
-    ui/                                 # Button, Input, Modal, Toast — 不变
-    knowledge-bases/                    # 现有组件不变
-    chat/
-      StrategySelector.tsx              # NEW: agentic / hybrid 切换
-      AgentSteps.tsx                    # NEW: agent 思考步骤展示
-    studio/                             # NEW
-      StudioPanel.tsx                   # 创建任务面板
-      TaskCard.tsx                      # 任务卡片（状态 + 进度 + 下载）
-      TaskProgress.tsx                  # 进度条
-
-  lib/
-    api.ts                              # 不变
-    auth.ts                             # 不变
-    types.ts                            # 扩展: StudioTask, SearchStrategy
-    sse.ts                              # 扩展: agent event types
-    markdown.ts                         # 扩展: 报告渲染（标题、表格、代码块）
-
-  hooks/
-    useAuth.tsx                         # 不变
-    useToast.tsx                        # 不变
-    usePanelResize.ts                   # 不变
-    useStudioTask.ts                    # NEW: 轮询任务状态
-```
-
-### 新增文件清单
+### ✅ 已实现（Phase 1 + 2）
 
 ```
-后端 (25 新文件):
-  services/agent/__init__.py
-  services/agent/runner.py
-  services/agent/types.py
-  services/agent/tools.py
-  services/agent/configs.py
-  services/retrieval/strategies/__init__.py
-  services/retrieval/strategies/agentic.py
-  services/retrieval/strategies/hybrid.py
-  services/studio/__init__.py
-  services/studio/runner.py
-  services/studio/types.py
-  services/studio/templates/report.py
-  services/studio/templates/ppt.py
-  services/studio/generators/markdown.py
+新增:
+  services/agent/__init__.py, runner.py, types.py, tools.py, configs.py
+  services/retrieval/strategies/__init__.py, agentic.py, hybrid.py
+  core/telemetry.py                                 # Langfuse tracing
+  tests/services/test_agent_runner.py
+
+修改:
+  services/llm.py               # 加 generate_with_tools, generate_stream, ToolCallDecision
+  services/chat.py              # 加 stream_message, search_strategy
+  services/retrieval/service.py # 策略分发器，DEFAULT_STRATEGY="agentic"
+  schemas/chat.py               # 加 search_strategy
+  api/chat.py                   # SSE streaming 端点
+  config.py                     # 加 EmbeddingConfig, TelemetryConfig
+  main.py                       # 注册 sessions router, telemetry init
+```
+
+### ⏳ 待实现（Phase 3–4）
+
+```
+新增:
+  services/studio/              # StudioTaskRunner, ReportWorkflow, generators/markdown.py, generators/pptx.py
   models/studio_task.py
-  repositories/studio_task_repository.py
+  repositories/studio_task.py
   schemas/studio.py
-  schemas/search.py
   api/studio.py
   tests/api/test_studio.py
-  tests/services/test_agent_runner.py
-  tests/eval/__init__.py
-  tests/eval/test_set.py
-  tests/eval/retrieval_eval.py
-  tests/eval/answer_eval.py
+  tests/eval/                   # test_set.py, retrieval_eval.py, answer_eval.py（v0.2.0）
 
-后端 (4 修改文件):
-  schemas/chat.py               # 加 search_strategy
-  api/chat.py                   # 透传 search_strategy
-  services/chat.py              # 接收 search_strategy
-  services/llm.py               # 加 generate_with_tools
-  services/retrieval/service.py # 策略分发器
-  core/response_codes.py        # 加 Studio 错误码
+修改:
+  services/indexing/pipeline.py  # chunk+embed 按需触发，入库只做 parse
+  models/source.py              # type 枚举扩展 url，新增 url 抓取逻辑
+  services/source.py            # URL 导入：抓取 → parse → index
 
-前端 (6 新文件):
+前端:
   components/chat/StrategySelector.tsx
-  components/chat/AgentSteps.tsx
-  components/studio/StudioPanel.tsx
-  components/studio/TaskCard.tsx
-  components/studio/TaskProgress.tsx
+  components/studio/StudioPanel.tsx, TaskCard.tsx, TaskProgress.tsx
   hooks/useStudioTask.ts
 ```

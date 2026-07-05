@@ -8,8 +8,8 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.response_codes import ResponseCode
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
-from app.repositories.message_repository import MessageRepository
-from app.repositories.session_repository import SessionRepository
+from app.repositories.message import MessageRepository
+from app.repositories.session import SessionRepository
 from app.services.knowledge_base import KnowledgeBaseService
 
 logger = structlog.get_logger(__name__)

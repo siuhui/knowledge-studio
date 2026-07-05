@@ -27,6 +27,12 @@ class DocumentRepository:
         return items, total
 
     @staticmethod
+    def list_ids_by_knowledge_base(db: Session, *, knowledge_base_id: str) -> list[str]:
+        """Return all document IDs in a knowledge base (lightweight — only id column)."""
+        rows = db.query(Document.id).filter(Document.knowledge_base_id == knowledge_base_id).all()
+        return [row[0] for row in rows]
+
+    @staticmethod
     def list_by_knowledge_base(
         db: Session, *, knowledge_base_id: str, offset: int = 0, limit: int = 20
     ) -> tuple[list[Document], int]:
