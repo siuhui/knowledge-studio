@@ -11,6 +11,7 @@ from app.config import settings
 from app.core.errors import AppError
 from app.core.exceptions import app_error_handler, general_exception_handler
 from app.core.logging import setup_logging
+from app.core.telemetry import init_telemetry, shutdown_telemetry
 from app.core.trace import RequestIdMiddleware
 from app.database import Base, engine
 
@@ -23,6 +24,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logger.info("starting up", app_name=settings.app_name, env=settings.env)
 
+    # OpenTelemetry + Langfuse (per-worker; no-op when disabled)
+    init_telemetry()
+
     if settings.auto_create_tables:
         # Ensure pgvector extension
         with engine.connect() as conn:
@@ -34,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     # Shutdown
+    shutdown_telemetry()
     logger.info("shutting down")
 
 

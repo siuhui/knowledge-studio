@@ -16,7 +16,6 @@ from app.config import settings
 
 if TYPE_CHECKING:
     from anthropic import Anthropic, AsyncAnthropic
-    from openai import AsyncOpenAI, OpenAI
 
 logger = structlog.get_logger(__name__)
 
@@ -116,22 +115,43 @@ def _to_openai_tools(tools: list[ToolSpec]) -> list[dict[str, Any]]:
 class OpenAIProvider:
     def __init__(self) -> None:
         self._model = settings.llm.chat_model
-        self._client: OpenAI | None = None
-        self._async_client: AsyncOpenAI | None = None
+        self._client: Any = None  # langfuse.openai.OpenAI (lazy)
+        self._async_client: Any = None  # langfuse.openai.AsyncOpenAI (lazy)
 
-    def generate(self, *, system_prompt: str, messages: list[dict[str, str]]) -> str:
+    def _get_client(self) -> Any:
+        """Lazy-init the OpenAI client — uses Langfuse tracing when available."""
         if self._client is None:
-            from openai import OpenAI
+            try:
+                from langfuse.openai import OpenAI  # type: ignore[attr-defined]
+            except ImportError:
+                from openai import OpenAI
 
             self._client = OpenAI(
                 api_key=settings.llm.api_key.get_secret_value(),
                 base_url=settings.llm.base_url or None,
             )
+        return self._client
 
+    def _get_async_client(self) -> Any:
+        """Lazy-init the AsyncOpenAI client — uses Langfuse tracing when available."""
+        if self._async_client is None:
+            try:
+                from langfuse.openai import AsyncOpenAI  # type: ignore[attr-defined]
+            except ImportError:
+                from openai import AsyncOpenAI
+
+            self._async_client = AsyncOpenAI(
+                api_key=settings.llm.api_key.get_secret_value(),
+                base_url=settings.llm.base_url or None,
+            )
+        return self._async_client
+
+    def generate(self, *, system_prompt: str, messages: list[dict[str, str]]) -> str:
+        client = self._get_client()
         full_messages = [{"role": "system", "content": system_prompt}, *messages]
-        response = self._client.chat.completions.create(
+        response = client.chat.completions.create(
             model=self._model,
-            messages=full_messages,  # type: ignore[arg-type]
+            messages=full_messages,
             temperature=0.3,
         )
         return response.choices[0].message.content or ""
@@ -144,13 +164,7 @@ class OpenAIProvider:
         tools: list[ToolSpec],
         output_schema: type[BaseModel] | None = None,
     ) -> ToolCallDecision:
-        if self._client is None:
-            from openai import OpenAI
-
-            self._client = OpenAI(
-                api_key=settings.llm.api_key.get_secret_value(),
-                base_url=settings.llm.base_url or None,
-            )
+        client = self._get_client()
 
         full_messages: list[dict[str, Any]] = []
         if system_prompt:
@@ -175,7 +189,7 @@ class OpenAIProvider:
                 },
             }
 
-        response = self._client.chat.completions.create(**kwargs)
+        response = client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         msg = choice.message
 
@@ -227,23 +241,23 @@ class OpenAIProvider:
         )
 
     async def generate_stream(self, *, system_prompt: str, messages: list[dict[str, str]]) -> AsyncGenerator[str, None]:
-        """Stream tokens from OpenAI chat completion."""
-        if self._async_client is None:
-            from openai import AsyncOpenAI
-
-            self._async_client = AsyncOpenAI(
-                api_key=settings.llm.api_key.get_secret_value(),
-                base_url=settings.llm.base_url or None,
-            )
+        """Stream tokens from OpenAI chat completion (auto-traced by Langfuse)."""
+        client = self._get_async_client()
 
         full_messages = [{"role": "system", "content": system_prompt}, *messages]
-        stream = await self._async_client.chat.completions.create(
+        stream = await client.chat.completions.create(
             model=self._model,
-            messages=full_messages,  # type: ignore[arg-type]
+            messages=full_messages,
             temperature=0.3,
             stream=True,
+            stream_options={"include_usage": True},
         )
-        async for chunk in stream:  # type: ignore[union-attr]
+        # OpenAI sends token usage in a final chunk with empty choices.
+        # langfuse.openai captures it automatically; we just avoid indexing
+        # into choices[0] when it's absent.
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta

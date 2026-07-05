@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _env_dir = Path(__file__).resolve().parent.parent  # apps/api/
@@ -29,27 +29,41 @@ class ObjectStorageConfig(BaseSettings):
 
 
 class EmbeddingConfig(BaseSettings):
-    """Embedding provider configuration (OpenAI-compatible API).
-
-    Uses DashScope text-embedding-v4 by default (1024 dim).
-    """
+    """Embedding provider configuration (OpenAI-compatible API)."""
 
     model_config = SettingsConfigDict(extra="ignore")
 
     api_key: SecretStr
     base_url: str | None = None
-    model: str = "text-embedding-v4"
-    dimension: int = 1024
-    batch_size: int = 100
+    model: str
+    dimension: int
+    batch_size: int
 
 
 class LLMConfig(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
-    provider: str = "openai"
+    provider: str
     api_key: SecretStr
     base_url: str | None = None
-    chat_model: str = "gpt-4o-mini"
+    chat_model: str
+
+
+class TelemetryConfig(BaseSettings):
+    """OpenTelemetry + Langfuse Cloud observability (v4 SDK).
+
+    Set KB_TELEMETRY__ENABLED=false to disable all tracing (e.g. in tests).
+    Keys must be provided via env vars — no defaults for SecretStr fields.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    enabled: bool = False
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_public_key: SecretStr | None = None
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    environment: str = "development"
+    release: str | None = None  # LANGFUSE_RELEASE
 
 
 class Settings(BaseSettings):
@@ -75,9 +89,10 @@ class Settings(BaseSettings):
     llm: LLMConfig
     embedding: EmbeddingConfig
     object_storage: ObjectStorageConfig
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     cors_origins: list[str]
 
-    auto_create_tables: bool = True  # v0.x dev mode
+    auto_create_tables: bool = False
 
     @field_validator("env")
     @classmethod

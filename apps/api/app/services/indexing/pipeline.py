@@ -8,16 +8,20 @@ Three-stage design so re-chunking doesn't require re-parsing the original file:
 
 import hashlib
 import re
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core.telemetry import observe, update_current_span
 from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.status_enums import DocumentStatus, IndexStageStatus
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_index_status_repository import DocumentIndexStatusRepository
 from app.repositories.document_repository import DocumentRepository
+from app.services.embedding import embedder
 
 logger = structlog.get_logger(__name__)
 
@@ -76,6 +80,7 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
 # ── Stage 1: Parse ───────────────────────────────────────────────────────────
 
 
+@observe(name="index.parse", capture_input=False, capture_output=False)
 def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: str, kb_id: str) -> str:
     """Stage 1: Parse raw bytes → create Document with full_text.
 
@@ -87,6 +92,9 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
 
     Returns the document ID.
     """
+    update_current_span(
+        input={"filename": filename, "source_id": source_id, "kb_id": kb_id},
+    )
     # ── Determine format and strip recognized extension from title ──
     if "." in filename:
         name_part, ext_part = filename.rsplit(".", 1)
@@ -136,6 +144,9 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
         # Remove the placeholder we just created
         db.delete(document)
         db.flush()
+        update_current_span(
+            output={"document_id": existing.id, "dedup": True},
+        )
         return existing.id
 
     # ── Fill in parsed content and transition to ready ──
@@ -150,12 +161,14 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
         text_length=len(text),
     )
 
+    update_current_span(output={"document_id": document.id})
     return document.id
 
 
 # ── Stage 2: Chunk ────────────────────────────────────────────────────────────
 
 
+@observe(name="index.chunk", capture_input=False, capture_output=False)
 def chunk_document(db: Session, *, document_id: str) -> int:
     """Stage 2: Read Document.full_text → chunk → create Chunks.
 
@@ -166,9 +179,7 @@ def chunk_document(db: Session, *, document_id: str) -> int:
 
     Returns the number of chunks (existing or newly created).
     """
-    from datetime import UTC, datetime
-
-    from app.repositories.document_index_status_repository import DocumentIndexStatusRepository
+    update_current_span(input={"document_id": document_id})
 
     document = DocumentRepository.get_by_id(db, document_id=document_id)
     if not document:
@@ -185,6 +196,7 @@ def chunk_document(db: Session, *, document_id: str) -> int:
             index_status.chunk_count = existing_count
             index_status.chunked_at = datetime.now(UTC)
             db.flush()
+        update_current_span(output={"chunk_count": existing_count, "cached": True})
         return existing_count
 
     # Mark chunk as running
@@ -226,12 +238,15 @@ def chunk_document(db: Session, *, document_id: str) -> int:
         chunk_count=len(chunk_records),
     )
 
-    return len(chunk_records)
+    chunk_count = len(chunk_records)
+    update_current_span(output={"chunk_count": chunk_count})
+    return chunk_count
 
 
 # ── Stage 3: Embed ──────────────────────────────────────────────────────────────
 
 
+@observe(name="index.embed", capture_input=False, capture_output=False)
 def embed_document(db: Session, *, document_id: str) -> int:
     """Stage 3: Embed unembedded chunks for a document.
 
@@ -243,10 +258,9 @@ def embed_document(db: Session, *, document_id: str) -> int:
 
     Returns the number of chunks embedded.
     """
-    from datetime import UTC, datetime
-
-    from app.repositories.document_index_status_repository import DocumentIndexStatusRepository
-    from app.services.embedding import embedder
+    update_current_span(
+        input={"document_id": document_id},
+    )
 
     chunks = ChunkRepository.list_by_document(db, document_id=document_id)
     index_status = DocumentIndexStatusRepository.get_or_create(db, document_id=document_id)
@@ -261,6 +275,7 @@ def embed_document(db: Session, *, document_id: str) -> int:
             index_status.embedded_at = datetime.now(UTC)
             index_status.embedding_model = settings.embedding.model
             db.flush()
+        update_current_span(output={"embedded_count": 0, "cached": True})
         return 0
 
     # Mark embed as running
@@ -301,6 +316,7 @@ def embed_document(db: Session, *, document_id: str) -> int:
         chunk_count=total_embedded,
     )
 
+    update_current_span(output={"embedded_count": total_embedded, "model": settings.embedding.model})
     return total_embedded
 
 
@@ -342,52 +358,78 @@ def run_index_pipeline(source_id: str, kb_id: str, s3_key: str, filename: str) -
     """Background task: download from MinIO → parse → chunk → embed.
 
     Each stage commits independently — a failure in one stage does not
-    roll back completed earlier stages. Re-running via /extract resumes
+    roll back completed earlier stages.  Re-running via /extract resumes
     from the first incomplete stage.
 
-    Pipeline failures do NOT affect Source status. Source is a config
-    record — it's active as long as the S3 object exists. Document
-    owns the content lifecycle; DocumentIndexStatus owns indexing state.
+    Runs in an independent background thread (FastAPI BackgroundTasks).
+    ``@observe`` creates a root span; the decorator degrades to a
+    pass-through when telemetry is disabled.
     """
     from app.database import SessionLocal
     from app.services.object_storage import ObjectStorageService
 
-    db = SessionLocal()
-    document_id: str | None = None
-    try:
-        # ── Stage 1: Parse ──
+    @observe(name="index.pipeline", capture_input=False, capture_output=False)
+    def _pipeline() -> None:
+        db = SessionLocal()
+        document_id: str | None = None
+        update_current_span(
+            input={"source_id": source_id, "kb_id": kb_id, "filename": filename},
+        )
         try:
-            raw_bytes = ObjectStorageService.get(key=s3_key)
-            document_id = parse_document(db, raw_bytes=raw_bytes, filename=filename, source_id=source_id, kb_id=kb_id)
-            db.commit()
+            # ── Stage 1: Download + Parse (auto-traced via @observe) ──
+            try:
+                raw_bytes = ObjectStorageService.get(key=s3_key)
+                document_id = parse_document(
+                    db,
+                    raw_bytes=raw_bytes,
+                    filename=filename,
+                    source_id=source_id,
+                    kb_id=kb_id,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("stage 1 (parse) failed", source_id=source_id)
+                update_current_span(level="ERROR", status_message="Stage 1 (parse) failed")
+                return
+
             logger.info("stage 1 (parse) completed", source_id=source_id, document_id=document_id)
-        except Exception:
-            db.rollback()
-            logger.exception("stage 1 (parse) failed", source_id=source_id)
-            return  # no document yet, nothing to mark
 
-        # ── Stage 2: Chunk ──
-        try:
-            chunk_count = chunk_document(db, document_id=document_id)
-            db.commit()
+            # ── Stage 2: Chunk (auto-traced via @observe) ──
+            try:
+                chunk_count = chunk_document(db, document_id=document_id)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("stage 2 (chunk) failed", document_id=document_id)
+                _mark_index_failed(document_id=document_id, stage="chunk", error_message=str(e))
+                update_current_span(level="ERROR", status_message="Stage 2 (chunk) failed")
+                return
+
             logger.info("stage 2 (chunk) completed", document_id=document_id, chunk_count=chunk_count)
-        except Exception as e:
-            db.rollback()
-            logger.exception("stage 2 (chunk) failed", document_id=document_id)
-            _mark_index_failed(document_id=document_id, stage="chunk", error_message=str(e))
-            return
 
-        # ── Stage 3: Embed ──
-        try:
-            embed_count = embed_document(db, document_id=document_id)
-            db.commit()
+            # ── Stage 3: Embed (auto-traced via @observe) ──
+            try:
+                embed_count = embed_document(db, document_id=document_id)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("stage 3 (embed) failed", document_id=document_id)
+                _mark_index_failed(document_id=document_id, stage="embed", error_message=str(e))
+                update_current_span(level="ERROR", status_message="Stage 3 (embed) failed")
+                return
+
             logger.info("stage 3 (embed) completed", document_id=document_id, embed_count=embed_count)
-        except Exception as e:
-            db.rollback()
-            logger.exception("stage 3 (embed) failed", document_id=document_id)
-            _mark_index_failed(document_id=document_id, stage="embed", error_message=str(e))
-            return
+            logger.info("index pipeline completed", source_id=source_id, document_id=document_id)
+            update_current_span(
+                output={
+                    "document_id": document_id,
+                    "chunk_count": chunk_count,
+                    "embed_count": embed_count,
+                },
+            )
 
-        logger.info("index pipeline completed", source_id=source_id, document_id=document_id)
-    finally:
-        db.close()
+        finally:
+            db.close()
+
+    _pipeline()

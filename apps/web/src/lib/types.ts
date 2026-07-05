@@ -244,7 +244,7 @@ export type AgentProgressEvent = {
 };
 
 export type StreamEvent =
-  | { type: "session"; session_id: string; user_msg_id: string }
+  | { type: "session"; session_id: string; user_msg_id: string; trace_id?: string }
   | AgentProgressEvent
   | { type: "token"; text: string }
   | { type: "citation"; citations: Citation[] }

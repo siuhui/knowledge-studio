@@ -13,6 +13,7 @@ from typing import Any
 
 import structlog
 
+from app.core.telemetry import observe, update_current_span
 from app.services.agent.types import (
     AgentConfig,
     AgentResult,
@@ -54,6 +55,7 @@ class _RunState:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    total_rounds: int = 0  # Set by _run_impl after the loop completes
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -122,6 +124,7 @@ class AgentRunner:
             logger.debug("agent round start", round=round_num)
 
             try:
+                # LLM call is auto-traced via langfuse.openai
                 decision = self.llm.generate_with_tools(
                     system_prompt="",
                     messages=messages,
@@ -302,19 +305,23 @@ class AgentRunner:
                 f"Use read_document to get full context if needed.)"
             )
             tool_call_id = f"call_{round_num}"
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tool_call_id,
-                            "type": "function",
-                            "function": {"name": tool_name, "arguments": json.dumps(tool_args)},
-                        }
-                    ],
-                }
-            )
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": json.dumps(tool_args)},
+                    }
+                ],
+            }
+            # DeepSeek / OpenAI reasoning: if the model produced reasoning_content
+            # (thinking mode), it MUST be passed back in the assistant message of
+            # subsequent rounds — otherwise the API returns 400.
+            if decision.thought:
+                assistant_msg["reasoning_content"] = decision.thought
+            messages.append(assistant_msg)
             messages.append(
                 {
                     "role": "tool",
@@ -341,6 +348,8 @@ class AgentRunner:
             # Reached max_rounds without explicit final answer
             logger.info("max rounds reached", max_rounds=self.config.max_rounds)
 
+        state.total_rounds = round_num
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
         logger.info(
@@ -352,8 +361,16 @@ class AgentRunner:
 
     # ── Sync consumer ──────────────────────────────────────────────────────
 
+    @observe(name="agent.run", capture_input=False, capture_output=False)
     def run(self, task: str, ctx: ToolContext) -> AgentResult:
-        """Execute synchronously. Consumes all _run_impl events, builds AgentResult."""
+        """Execute synchronously. Consumes all _run_impl events, builds AgentResult.
+
+        ``@observe`` creates an ``agent.run`` span nested under the calling
+        context (e.g. ``search.retrieve``).  LLM calls inside the loop are
+        auto-traced by ``langfuse.openai`` and appear as child generations.
+        """
+        update_current_span(input={"task": task[:200]})
+
         start_time = time.perf_counter()
         state = _RunState()
         steps: list[AgentStep] = []
@@ -373,11 +390,11 @@ class AgentRunner:
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-        return AgentResult(
+        result = AgentResult(
             steps=steps,
             collected_artifacts=collected,
             final_answer=final_answer,
-            total_rounds=len(steps),
+            total_rounds=state.total_rounds,
             total_tool_calls=total_tool_calls,
             usage=AgentUsage(
                 input_tokens=state.input_tokens,
@@ -387,8 +404,26 @@ class AgentRunner:
             ),
         )
 
+        update_current_span(
+            output={
+                "total_rounds": result.total_rounds,
+                "total_tool_calls": result.total_tool_calls,
+                "final_answer": bool(result.final_answer),
+                "artifacts_count": len(result.collected_artifacts),
+            },
+            metadata={
+                "input_tokens": result.usage.input_tokens,  # type: ignore[union-attr]
+                "output_tokens": result.usage.output_tokens,  # type: ignore[union-attr]
+                "latency_ms": result.usage.latency_ms,  # type: ignore[union-attr]
+                "max_rounds": self.config.max_rounds,
+            },
+        )
+
+        return result
+
     # ── Streaming consumer ─────────────────────────────────────────────────
 
+    @observe(name="agent.run.stream", capture_input=False, capture_output=False)
     async def run_stream(self, task: str, ctx: ToolContext) -> AsyncIterator[str]:
         """Stream execution. Yields SSE-formatted JSON strings.
 
@@ -398,6 +433,41 @@ class AgentRunner:
           {"type": "tool_result", "tool": "...", "count": N, "round": N}
           {"type": "final",       "answer": "..."}
           {"type": "error",       "message": "..."}
+
+        ``@observe`` creates an ``agent.run.stream`` span nested under the
+        calling context.  LLM calls inside the loop are auto-traced by
+        ``langfuse.openai``.
+
+        .. note::
+
+           ``@observe`` on an async generator relies on the generator being
+           fully consumed for the span to close.  If the SSE client disconnects
+           mid-stream, the span duration may be truncated.  Acceptable for
+           local dev; consider a context-manager span managed by the caller
+           for production if this matters.
         """
-        for event in self._run_impl(task, ctx):
-            yield json.dumps(event.data)
+        update_current_span(input={"task": task[:200]})
+
+        state = _RunState()
+        total_tool_calls = 0
+        had_final = False
+
+        try:
+            for event in self._run_impl(task, ctx, state):
+                yield json.dumps(event.data)
+                if event.type == "tool_result":
+                    total_tool_calls += 1
+                elif event.type == "final":
+                    had_final = True
+        finally:
+            update_current_span(
+                output={
+                    "total_rounds": state.total_rounds,
+                    "total_tool_calls": total_tool_calls,
+                    "final_answer": had_final,
+                },
+                metadata={
+                    "input_tokens": state.input_tokens,
+                    "output_tokens": state.output_tokens,
+                },
+            )

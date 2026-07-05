@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 from sqlalchemy.orm import Session
 
+from app.core.telemetry import get_current_trace_id, observe, trace_context, update_current_span
 from app.models.chat_message import ChatMessage
 from app.repositories.message_repository import MessageRepository
 from app.repositories.session_repository import SessionRepository
@@ -50,6 +51,7 @@ def _build_context(retrieval: RetrievalQueryResponse | None) -> str:
 
 class ChatService:
     @staticmethod
+    @observe(name="chat.message", capture_input=False, capture_output=False)
     def send_message(
         db: Session,
         *,
@@ -62,158 +64,30 @@ class ChatService:
     ) -> ChatResponse:
         """Send a chat message. Auto-creates session if session_id is None.
 
-        reference_document_ids from the request takes priority.
-        When omitted, falls back to the session's stored value.
-        None=all, []=none, [...] =filter.
+        LLM generation is auto-traced by ``langfuse.openai`` integration.
         """
+        doc_ids = reference_document_ids
 
-        doc_ids = reference_document_ids  # request takes priority
+        # Explicitly set trace input to only the relevant user query
+        update_current_span(
+            input={"query": content, "kb_id": kb_id, "strategy": search_strategy},
+        )
 
-        # 1. Resolve session (create if new, with the correct scope)
+        # 1. Resolve session (outside trace_context so new sessions get real IDs)
         if session_id is None:
-            session = SessionService.create(
-                db,
-                kb_id=kb_id,
-                user_id=user_id,
-                reference_document_ids=doc_ids,
-            )
+            session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
             session_id = session.id
         else:
             session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
             if reference_document_ids is None:
-                doc_ids = session.reference_document_ids  # fall back to stored scope
+                doc_ids = session.reference_document_ids
 
-        # 2. Retrieve — skip when no documents are explicitly selected
-        if doc_ids is not None and len(doc_ids) == 0:
-            retrieval = None
-        else:
-            retrieval = RetrievalService.search(
-                db,
-                query=content,
-                knowledge_base_id=kb_id,
-                top_k=10,
-                document_ids=doc_ids,
-                strategy=search_strategy,
-            )
-
-        context = _build_context(retrieval)
-
-        # 3. Build messages with conversation history
-        # session.messages is eager-loaded (lazy="selectin"), sorted by created_at
-        history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
-
-        if context:
-            system_prompt = RAG_SYSTEM_PROMPT
-            user_message = f"Context:\n{context}\n\nQuestion: {content}"
-        else:
-            system_prompt = CHAT_SYSTEM_PROMPT
-            user_message = content
-
-        messages = [*history, {"role": "user", "content": user_message}]
-        answer = llm_provider.generate(system_prompt=system_prompt, messages=messages)
-
-        # 4. Build citations & persist
-        citations = _build_citations(retrieval)
-
-        persisted = True
-        ai_msg_id = ""
-        try:
-            _, _, ai_msg = SessionService.add_qa_exchange(
-                db,
-                session_id=session_id,
-                kb_id=kb_id,
-                user_id=user_id,
-                query=content,
-                answer=answer,
-                citations=citations,
-            )
-            ai_msg_id = ai_msg.id
-        except Exception:
-            logger.exception("failed to persist messages", session_id=session_id)
-            persisted = False
-
-        return ChatResponse(
+        with trace_context(
+            user_id=user_id,
             session_id=session_id,
-            message_id=ai_msg_id,
-            answer=answer,
-            citations=[Citation(**c) for c in citations],
-            persisted=persisted,
-        )
-
-    @staticmethod
-    async def stream_message(
-        db: Session,
-        *,
-        kb_id: str,
-        user_id: str,
-        session_id: str | None,
-        content: str,
-        reference_document_ids: list[str] | None = None,
-        search_strategy: str = "agentic",
-    ) -> AsyncIterator[str]:
-        """Stream chat response as SSE JSON event strings.
-
-        Yields JSON strings (one per SSE ``data:`` field).  Event types:
-
-        ``session``        — session_id, user_msg_id (always first)
-        ``agent_progress`` — retrieval progress indicator (optional, before tokens)
-        ``token``          — LLM text chunk (one or more)
-        ``citation``       — deduplicated source citations
-        ``done``           — persisted flag + ai_message_id
-        ``error``          — error message (before ``done`` on failure)
-        """
-        doc_ids = reference_document_ids
-
-        try:
-            # ── 1. Resolve session ──
-            if session_id is None:
-                session = SessionService.create(
-                    db,
-                    kb_id=kb_id,
-                    user_id=user_id,
-                    reference_document_ids=doc_ids,
-                )
-                session_id = session.id
-            else:
-                session = SessionService.get_by_id(
-                    db,
-                    session_id=session_id,
-                    kb_id=kb_id,
-                    user_id=user_id,
-                )
-                if reference_document_ids is None:
-                    doc_ids = session.reference_document_ids
-
-            # ── 2. Capture history BEFORE persisting current message ──
-            history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
-
-            # ── 3. Persist user message immediately (durable before streaming) ──
-            user_msg = ChatMessage(
-                session_id=session_id,
-                role="user",
-                content=content,
-            )
-            MessageRepository.save(db, message=user_msg)
-            db.commit()
-
-            # Update last_message_at + auto-title before streaming so the sidebar
-            # refreshes immediately
-            now = datetime.now(UTC)
-            if session.title == DEFAULT_SESSION_TITLE:
-                session.title = auto_title(content)
-            session.last_message_at = now
-            SessionRepository.save(db, session=session)
-            db.commit()
-
-            yield json.dumps(
-                {
-                    "type": "session",
-                    "session_id": session_id,
-                    "user_msg_id": user_msg.id,
-                }
-            )
-
-            # ── 4. Retrieve ──
+            tags=["chat", "sync"],
+        ):
+            # 2. Retrieve (auto-traced via @observe on RetrievalService.search)
             if doc_ids is not None and len(doc_ids) == 0:
                 retrieval = None
             else:
@@ -226,16 +100,10 @@ class ChatService:
                     strategy=search_strategy,
                 )
 
-            # Emit agent progress events before streaming tokens.
-            # These are user-facing status indicators (e.g. "搜索「xxx」…"),
-            # not raw tool calls — safe to emit by default.
-            if retrieval and retrieval.agent_steps:
-                for step in retrieval.agent_steps:
-                    yield json.dumps(step)
-
+            # 3. Build context + messages
             context = _build_context(retrieval)
+            history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
 
-            # ── 5. Build messages & stream LLM ──
             if context:
                 system_prompt = RAG_SYSTEM_PROMPT
                 user_message = f"Context:\n{context}\n\nQuestion: {content}"
@@ -245,46 +113,179 @@ class ChatService:
 
             messages = [*history, {"role": "user", "content": user_message}]
 
-            full_answer = ""
-            async_provider = get_async_provider()
-            async for token in async_provider.generate_stream(
-                system_prompt=system_prompt,
-                messages=messages,
-            ):
-                full_answer += token
-                yield json.dumps({"type": "token", "text": token})
+            # 4. LLM generation (auto-traced via langfuse.openai)
+            answer = llm_provider.generate(system_prompt=system_prompt, messages=messages)
 
-            # ── 6. Citations ──
+            # 5. Persist
             citations = _build_citations(retrieval)
-            yield json.dumps({"type": "citation", "citations": citations})
-
-            # ── 7. Persist AI message ──
             persisted = True
             ai_msg_id = ""
             try:
-                ai_msg = ChatMessage(
+                _, _, ai_msg = SessionService.add_qa_exchange(
+                    db,
                     session_id=session_id,
-                    role="assistant",
-                    content=full_answer,
+                    kb_id=kb_id,
+                    user_id=user_id,
+                    query=content,
+                    answer=answer,
                     citations=citations,
                 )
-                MessageRepository.save(db, message=ai_msg)
-                db.commit()
                 ai_msg_id = ai_msg.id
             except Exception:
-                db.rollback()
-                logger.exception("failed to persist AI message", session_id=session_id)
+                logger.exception("failed to persist messages", session_id=session_id)
                 persisted = False
 
-            yield json.dumps(
-                {
-                    "type": "done",
-                    "persisted": persisted,
-                    "ai_message_id": ai_msg_id,
-                }
+            # Set trace output with a concise summary
+            update_current_span(
+                output={"answer_length": len(answer), "persisted": persisted, "citations_count": len(citations)},
             )
 
-        except Exception:
-            logger.exception("stream error", session_id=session_id)
-            yield json.dumps({"type": "error", "message": "An error occurred during generation"})
-            yield json.dumps({"type": "done", "persisted": False})
+            return ChatResponse(
+                session_id=session_id,
+                message_id=ai_msg_id,
+                answer=answer,
+                citations=[Citation(**c) for c in citations],
+                persisted=persisted,
+            )
+
+    @staticmethod
+    @observe(name="chat.message.stream", capture_input=False, capture_output=False)
+    async def stream_message(
+        db: Session,
+        *,
+        kb_id: str,
+        user_id: str,
+        session_id: str | None,
+        content: str,
+        reference_document_ids: list[str] | None = None,
+        search_strategy: str = "agentic",
+    ) -> AsyncIterator[str]:
+        """Stream chat response as SSE JSON event strings.
+
+        LLM generation is auto-traced by ``langfuse.openai`` integration.
+        """
+        doc_ids = reference_document_ids
+
+        update_current_span(
+            input={"query": content, "kb_id": kb_id, "strategy": search_strategy},
+        )
+
+        # ── 1. Resolve session (outside trace_context so new sessions get real IDs) ──
+        if session_id is None:
+            session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
+            session_id = session.id
+        else:
+            session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
+            if reference_document_ids is None:
+                doc_ids = session.reference_document_ids
+
+        with trace_context(
+            user_id=user_id,
+            session_id=session_id,
+            tags=["chat", "stream"],
+        ):
+            try:
+                # ── 1. History before persisting ──
+                history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
+
+                # ── 2. Persist user message ──
+                user_msg = ChatMessage(session_id=session_id, role="user", content=content)
+                MessageRepository.save(db, message=user_msg)
+                db.commit()
+
+                now = datetime.now(UTC)
+                if session.title == DEFAULT_SESSION_TITLE:
+                    session.title = auto_title(content)
+                session.last_message_at = now
+                SessionRepository.save(db, session=session)
+                db.commit()
+
+                trace_id = get_current_trace_id()
+
+                yield json.dumps(
+                    {
+                        "type": "session",
+                        "session_id": session_id,
+                        "user_msg_id": user_msg.id,
+                        "trace_id": trace_id,
+                    }
+                )
+
+                # ── 3. Retrieve (auto-traced via @observe on RetrievalService.search) ──
+                if doc_ids is not None and len(doc_ids) == 0:
+                    retrieval = None
+                else:
+                    retrieval = RetrievalService.search(
+                        db,
+                        query=content,
+                        knowledge_base_id=kb_id,
+                        top_k=10,
+                        document_ids=doc_ids,
+                        strategy=search_strategy,
+                    )
+
+                if retrieval and retrieval.agent_steps:
+                    for step in retrieval.agent_steps:
+                        yield json.dumps(step)
+
+                context = _build_context(retrieval)
+
+                # ── 4. Build messages ──
+                if context:
+                    system_prompt = RAG_SYSTEM_PROMPT
+                    user_message = f"Context:\n{context}\n\nQuestion: {content}"
+                else:
+                    system_prompt = CHAT_SYSTEM_PROMPT
+                    user_message = content
+
+                messages = [*history, {"role": "user", "content": user_message}]
+
+                # ── 5. Stream LLM (auto-traced via langfuse.openai) ──
+                full_answer = ""
+                async_provider = get_async_provider()
+
+                async for token in async_provider.generate_stream(system_prompt=system_prompt, messages=messages):
+                    full_answer += token
+                    yield json.dumps({"type": "token", "text": token})
+
+                # ── 6. Citations ──
+                citations = _build_citations(retrieval)
+                yield json.dumps({"type": "citation", "citations": citations})
+
+                # ── 7. Persist AI message ──
+                persisted = True
+                ai_msg_id = ""
+                try:
+                    ai_msg = ChatMessage(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_answer,
+                        citations=citations,
+                    )
+                    MessageRepository.save(db, message=ai_msg)
+                    db.commit()
+                    ai_msg_id = ai_msg.id
+                except Exception:
+                    db.rollback()
+                    logger.exception("failed to persist AI message", session_id=session_id)
+                    persisted = False
+
+                # Set trace output with a concise summary
+                update_current_span(
+                    output={
+                        "answer_length": len(full_answer),
+                        "persisted": persisted,
+                        "citations_count": len(citations),
+                    },
+                )
+
+                yield json.dumps({"type": "done", "persisted": persisted, "ai_message_id": ai_msg_id})
+
+            except Exception:
+                logger.exception("stream error", session_id=session_id)
+                update_current_span(
+                    level="ERROR",
+                    status_message="An error occurred during generation",
+                )
+                yield json.dumps({"type": "error", "message": "An error occurred during generation"})
+                yield json.dumps({"type": "done", "persisted": False})

@@ -439,6 +439,7 @@ export default function WorkspacePage() {
   const [agentSteps, setAgentSteps] = useState<AgentProgressEvent[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamingMsgIdRef = useRef<string | null>(null);
+  const traceIdRef = useRef<string>(""); // Langfuse trace ID for debugging
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1001,6 +1002,7 @@ export default function WorkspacePage() {
     setInput("");
     setChatStatus("thinking");
     setAgentSteps([]);
+    traceIdRef.current = ""; // reset for new request
     isNearBottomRef.current = true;
 
     const controller = new AbortController();
@@ -1037,6 +1039,10 @@ export default function WorkspacePage() {
                   scroll: false,
                 });
                 loadSessions();
+              }
+              // Store trace_id for Langfuse debugging
+              if (event.trace_id) {
+                traceIdRef.current = event.trace_id;
               }
               // Create placeholder AI message
               const tempId = crypto.randomUUID();
@@ -1090,7 +1096,11 @@ export default function WorkspacePage() {
               setChatStatus("idle");
               break;
             case "error":
-              addToast("error", event.message);
+              addToast(
+                "error",
+                event.message +
+                  (traceIdRef.current ? ` (Trace ID: ${traceIdRef.current.slice(0, 8)}…)` : ""),
+              );
               setChatStatus("error");
               break;
           }
@@ -1104,7 +1114,10 @@ export default function WorkspacePage() {
         return;
       }
       const msg = err instanceof Error ? err.message : "Failed to get answer";
-      addToast("error", msg);
+      const traceSuffix = traceIdRef.current
+        ? ` (Trace ID: ${traceIdRef.current.slice(0, 8)}…)`
+        : "";
+      addToast("error", msg + traceSuffix);
       setChatStatus("error");
     } finally {
       abortControllerRef.current = null;
