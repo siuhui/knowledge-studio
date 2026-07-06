@@ -95,8 +95,8 @@ interface SourcesTabProps {
 export function SourcesTab({ sources, activeSourceId, onSelectSource }: SourcesTabProps) {
   if (sources.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center px-3">
-        <div className="text-center py-10">
+      <div className="flex-1 overflow-y-auto px-3">
+        <div className="text-center mt-[60px]">
           <div className="flex justify-center mb-3">
             <svg
               width="28"
@@ -124,7 +124,7 @@ export function SourcesTab({ sources, activeSourceId, onSelectSource }: SourcesT
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-3 pb-4">
+    <div className="flex-1 overflow-y-auto px-3 pb-4 custom-scrollbar">
       <div className="space-y-1">
         {sources.map((source) => {
           const isActive = activeSourceId === source.id;

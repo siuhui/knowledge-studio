@@ -52,8 +52,10 @@ export function usePanelResize(initialWidth = 400) {
       const viewportWidth = window.innerWidth;
       // Right panel can take at most 65vw, but must leave at least 360px for the chat area
       const maxWidthByViewport = Math.floor(viewportWidth * 0.65);
-      // The approx space available: viewport - 360 (chat min) - 260 (sidebar min) - 6 (drag handle)
-      const maxWidthByChatGuard = viewportWidth - 360 - 260 - 6;
+      // The approx space available: viewport - 360 (chat min) - 320 (sidebar max) - 6 (drag handle)
+      // Use sidebar max-width (320px) not min (260px) — otherwise the panel can overflow
+      // when the sidebar is wider than 260px (it uses w-[22%], which is 260–320px).
+      const maxWidthByChatGuard = viewportWidth - 360 - 320 - 6;
       const maxWidth = Math.min(maxWidthByViewport, Math.max(maxWidthByChatGuard, 300));
 
       const newWidth = Math.max(300, Math.min(maxWidth, startWidthRef.current + delta));

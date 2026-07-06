@@ -56,9 +56,31 @@ export interface DocumentDetail {
 // ── Panel state (workspace right panel) ──
 
 export type PanelState =
-  | { type: "empty" }
+  | { type: "studio" }
   | { type: "source"; sourceId: string }
   | { type: "document"; documentId: string };
+
+// ── Studio task types ──
+
+export interface StudioTask {
+  id: string;
+  task_type: "report" | "ppt";
+  title: string;
+  status: "pending" | "running" | "completed" | "failed";
+  progress: number;
+  status_message: string | null;
+  output_s3_key: string | null;
+  created_at: string;
+}
+
+export interface ReportTask {
+  id: string;
+  type: "report" | "ppt";
+  title: string;
+  status: "generating" | "completed" | "failed";
+  content: string;
+  error?: string;
+}
 
 // ── Derived / UI types ──
 

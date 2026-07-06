@@ -1,33 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import {
-  api,
-  apiPaginated,
-  presignSourceUpload,
-  completeSourceUpload,
-  uploadToPresignedUrl,
-  getContentType,
-  listSourceDocuments,
-  listKnowledgeBaseDocuments,
-  getDocumentChunks,
-  sendMessageStream,
-  listSessions,
-  getSession,
-  renameSession,
-  deleteSession,
-} from "@/lib/api";
-import { parseSSEStream } from "@/lib/sse";
-import { useToast } from "@/hooks/useToast";
-import { useDocumentSelection } from "@/hooks/useDocumentSelection";
-import { usePanelResize } from "@/hooks/usePanelResize";
-import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
-import { DetailPanel } from "@/components/knowledge-bases/DetailPanel";
 import { AddSourceModal } from "@/components/knowledge-bases/AddSourceModal";
+import { CreateReportModal } from "@/components/knowledge-bases/CreateReportModal";
+import type { ReportConfig } from "@/components/knowledge-bases/CreateReportModal";
+import { ReportViewerModal } from "@/components/knowledge-bases/ReportViewerModal";
+import { DetailPanel } from "@/components/knowledge-bases/DetailPanel";
+import type { DetailSourceDetail } from "@/components/knowledge-bases/DetailPanel";
+import { LeftSidebar } from "@/components/knowledge-bases/LeftSidebar";
 import { SessionBar } from "@/components/knowledge-bases/SessionBar";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { MarkdownContent } from "@/components/ui/MarkdownContent";
+import { useDocumentSelection } from "@/hooks/useDocumentSelection";
+import { usePanelResize } from "@/hooks/usePanelResize";
+import { useToast } from "@/hooks/useToast";
+import {
+  api,
+  apiPaginated,
+  completeSourceUpload,
+  deleteSession,
+  getContentType,
+  getDocumentChunks,
+  getSession,
+  listKnowledgeBaseDocuments,
+  listSessions,
+  listSourceDocuments,
+  presignSourceUpload,
+  renameSession,
+  sendMessageStream,
+  uploadToPresignedUrl,
+} from "@/lib/api";
+import { parseSSEStream } from "@/lib/sse";
 import { flattenDocs } from "@/lib/types";
 import type {
   AgentProgressEvent,
@@ -37,12 +39,14 @@ import type {
   FlatDocument,
   KnowledgeBase,
   PanelState,
+  ReportTask,
   SessionItem,
   Source,
   SourceNode,
   StreamEvent,
 } from "@/lib/types";
-import type { DetailSourceDetail } from "@/components/knowledge-bases/DetailPanel";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ── Message types ──
 interface ChatMessage {
@@ -105,7 +109,7 @@ function ChatArea({
       style={isMaximized && width ? { width } : undefined}
     >
       {sessionBar}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto flex flex-col custom-scrollbar">
         {hasMessages ? (
           <div className={isMaximized ? "py-4" : "py-6"}>
             {messages.map((msg, i) => {
@@ -423,8 +427,8 @@ export default function WorkspacePage() {
   // Modals
   const [addSourceOpen, setAddSourceOpen] = useState(false);
 
-  // Studio
-  const [panelState, setPanelState] = useState<PanelState>({ type: "empty" });
+  // Studio — default right panel
+  const [panelState, setPanelState] = useState<PanelState>({ type: "studio" });
 
   // Document cache + loading
   const documentCacheRef = useRef<Map<string, DocumentDetail>>(new Map());
@@ -447,6 +451,16 @@ export default function WorkspacePage() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  // Report tasks — list shown in the right panel's Studio view
+  const [reportTasks, setReportTasks] = useState<ReportTask[]>([]);
+
+  // Report viewer modal
+  const [viewingReport, setViewingReport] = useState<ReportTask | null>(null);
+
+  // Create report modal
+  const [createReportOpen, setCreateReportOpen] = useState(false);
+  const [reportGenerating, setReportGenerating] = useState(false);
 
   // ── Layout: panel resizing & modes ──
   type PanelMode = "normal" | "maximized";
@@ -726,6 +740,7 @@ export default function WorkspacePage() {
     setActiveSessionId(null);
     setMessages([]);
     resetSelection();
+    setPanelState({ type: "studio" }); // auto-revert to Studio
     router.replace(`/knowledge-bases/${kbId}`, { scroll: false });
   }, [kbId, router, resetSelection]);
 
@@ -786,24 +801,35 @@ export default function WorkspacePage() {
     (docId: string) => {
       setCheckedDocIds((prev) => {
         const next = new Set(prev);
-        if (next.has(docId)) next.delete(docId);
-        else next.add(docId);
+        if (next.has(docId)) {
+          next.delete(docId);
+          // Auto-revert: if the deselected doc is being viewed, go back to Studio
+          if (panelState.type === "document" && panelState.documentId === docId) {
+            setPanelState({ type: "studio" });
+          }
+        } else {
+          next.add(docId);
+        }
         persistDocumentScope(next);
         return next;
       });
     },
-    [persistDocumentScope, setCheckedDocIds],
+    [panelState, persistDocumentScope, setCheckedDocIds],
   );
 
   const handleToggleAll = useCallback(
     (selectAll: boolean) => {
       setCheckedDocIds(() => {
         const next = selectAll ? new Set(documents.map((d) => d.id)) : new Set<string>();
+        // Auto-revert: deselecting all while viewing a document → back to Studio
+        if (!selectAll && panelState.type === "document") {
+          setPanelState({ type: "studio" });
+        }
         persistDocumentScope(next);
         return next;
       });
     },
-    [documents, persistDocumentScope, setCheckedDocIds],
+    [documents, panelState, persistDocumentScope, setCheckedDocIds],
   );
 
   // Upload flow: create source → presign → browser-to-MinIO → complete → reload
@@ -858,7 +884,7 @@ export default function WorkspacePage() {
   }, []);
 
   const handleBack = useCallback(() => {
-    setPanelState({ type: "empty" });
+    setPanelState({ type: "studio" });
     // Reset panel mode to normal when navigating away from document/source views
     setPanelMode("normal");
   }, []);
@@ -947,7 +973,7 @@ export default function WorkspacePage() {
       await api(`/api/v1/sources/${deleteSourceId}`, { method: "DELETE" });
       addToast("success", "Source deleted. Documents preserved in knowledge base.");
       setDeleteSourceId(null);
-      setPanelState({ type: "empty" });
+      setPanelState({ type: "studio" });
       // Reload — source disappears, its documents reappear as orphaned
       await loadSources();
     } catch (err) {
@@ -974,7 +1000,7 @@ export default function WorkspacePage() {
       setDeleteDocumentId(null);
       setDocumentTitleToDelete("");
       // Clear panel, cache, and reload
-      setPanelState({ type: "empty" });
+      setPanelState({ type: "studio" });
       documentCacheRef.current.delete(deleteDocumentId);
       setDocumentCache(new Map(documentCacheRef.current));
       await loadSources();
@@ -985,6 +1011,103 @@ export default function WorkspacePage() {
       setDeletingDocument(false);
     }
   }, [deleteDocumentId, documentTitleToDelete, addToast, loadSources]);
+
+  // ── Studio: Create Report ──
+  const handleCreateReport = useCallback(() => {
+    setCreateReportOpen(true);
+  }, []);
+
+  const handleSubmitReport = useCallback((config: ReportConfig) => {
+    setCreateReportOpen(false);
+    setReportGenerating(true);
+
+    const taskId = crypto.randomUUID();
+    const newTask: ReportTask = {
+      id: taskId,
+      type: "report",
+      title: config.title,
+      status: "generating",
+      content: "",
+    };
+
+    setReportTasks((prev) => [...prev, newTask]);
+
+    // Simulate generation — backend Studio API is not yet implemented
+    // TODO: replace with actual API call to POST /api/v1/knowledge-bases/{kb_id}/studio/tasks
+    setTimeout(() => {
+      const mockContent = `# ${config.title}
+
+## Executive Summary
+
+This report provides a comprehensive analysis based on the documents in your knowledge base.
+The following sections explore key findings, patterns, and recommendations.
+
+---
+
+## 1. Introduction
+
+Based on the instruction: *"${config.instruction}"*
+
+This report was generated using the **${config.style}** style at **${config.length}** length.
+
+## 2. Key Findings
+
+### 2.1 Document Analysis
+
+The knowledge base contains several documents that were analyzed for this report.
+Key themes and patterns were identified across the source materials.
+
+### 2.2 Cross-Document Patterns
+
+Multiple sources converge on similar conclusions, suggesting strong consensus
+in the knowledge base around the core topics.
+
+## 3. Detailed Analysis
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+### 3.1 Technical Assessment
+
+The technical documentation reveals a well-structured architecture with clear
+separation of concerns. Key components are modular and follow established patterns.
+
+### 3.2 Risk Analysis
+
+Several potential risks were identified during the analysis. These should be
+reviewed and addressed as part of the ongoing development process.
+
+## 4. Recommendations
+
+1. **Continue monitoring** the identified patterns for emerging trends
+2. **Update documentation** to reflect the latest architectural decisions
+3. **Schedule regular reviews** of the knowledge base content for freshness
+4. **Expand coverage** in areas where documentation is sparse
+
+## 5. Conclusion
+
+The knowledge base provides a solid foundation for understanding the system
+architecture and design decisions. Continued investment in documentation
+quality and coverage will yield compounding benefits over time.
+
+---
+
+*Report generated by KnowledgeBase Studio · ${config.style} style · ${config.length} length*
+*${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}*
+`;
+
+      setReportTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, status: "completed", content: mockContent } : t)),
+      );
+      setReportGenerating(false);
+    }, 5000);
+  }, []);
+
+  // ── Report viewer ──
+  const handleViewReport = useCallback((report: ReportTask) => {
+    setViewingReport(report);
+  }, []);
 
   const handleSend = useCallback(async () => {
     const query = input.trim();
@@ -1157,7 +1280,7 @@ export default function WorkspacePage() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="h-[calc(100vh-3rem)] flex overflow-hidden">
+    <div className="h-[calc(100vh-3rem)] flex flex-col overflow-hidden">
       {/* ══ Upload progress overlay ══ */}
       {uploading && (
         <div className="fixed top-12 left-1/2 -translate-x-1/2 z-40">
@@ -1181,154 +1304,171 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      {/* ══ Left: Tabbed sidebar (Documents / Sources) ══ */}
-      <LeftSidebar
-        knowledgeBaseName={kbName}
-        documents={documents}
-        sources={sources}
-        checkedDocIds={checkedDocIds}
-        activeSourceId={panelState.type === "source" ? panelState.sourceId : null}
-        sourcesFirstLoad={sourcesFirstLoad}
-        sourcesError={sourcesError}
-        onToggleDocument={handleToggleDocument}
-        onToggleAll={handleToggleAll}
-        onAddSource={() => setAddSourceOpen(true)}
-        onSelectSource={(sourceId) => setPanelState({ type: "source", sourceId })}
-        onSelectDocument={handleSelectDocument}
-        onTraceSource={handleTraceSource}
-      />
+      {/* ══ Main three-column area ══ */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* ══ Left: Tabbed sidebar (Documents / Sources) ══ */}
+        <LeftSidebar
+          knowledgeBaseName={kbName}
+          documents={documents}
+          sources={sources}
+          checkedDocIds={checkedDocIds}
+          activeSourceId={panelState.type === "source" ? panelState.sourceId : null}
+          sourcesFirstLoad={sourcesFirstLoad}
+          sourcesError={sourcesError}
+          onToggleDocument={handleToggleDocument}
+          onToggleAll={handleToggleAll}
+          onAddSource={() => setAddSourceOpen(true)}
+          onSelectSource={(sourceId) => setPanelState({ type: "source", sourceId })}
+          onSelectDocument={handleSelectDocument}
+          onTraceSource={handleTraceSource}
+        />
 
-      {/* ══ Center & Right: layout varies by panelMode ══ */}
+        {/* ══ Center & Right: layout varies by panelMode ══ */}
 
-      {/* ── Normal: [Chat flex-1] [Handle] [DetailPanel fixed] ── */}
-      {panelMode === "normal" && (
-        <>
-          <ChatArea
-            panelMode="normal"
-            isDragging={isDragging}
-            hasMessages={hasMessages}
-            messages={messages}
-            chatStatus={chatStatus}
-            agentSteps={agentSteps}
-            hasDocs={hasDocs}
-            input={input}
-            checkedDocIds={checkedDocIds}
-            scrollRef={scrollRef}
-            inputRef={inputRef}
-            onInputChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            onSend={handleSend}
-            onStop={handleStop}
-            sessionBar={
-              <SessionBar
-                sessions={sessions}
-                activeSessionId={activeSessionId}
-                loading={sessionsLoading}
-                onSelectSession={handleSelectSession}
-                onNewChat={handleNewChat}
-                onRenameSession={handleRenameSession}
-                onDeleteSession={handleDeleteSession}
-              />
-            }
-          />
+        {/* ── Normal: [Chat flex-1] [Handle] [DetailPanel fixed] ── */}
+        {panelMode === "normal" && (
+          <>
+            <ChatArea
+              panelMode="normal"
+              isDragging={isDragging}
+              hasMessages={hasMessages}
+              messages={messages}
+              chatStatus={chatStatus}
+              agentSteps={agentSteps}
+              hasDocs={hasDocs}
+              input={input}
+              checkedDocIds={checkedDocIds}
+              scrollRef={scrollRef}
+              inputRef={inputRef}
+              onInputChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onSend={handleSend}
+              onStop={handleStop}
+              sessionBar={
+                <SessionBar
+                  sessions={sessions}
+                  activeSessionId={activeSessionId}
+                  loading={sessionsLoading}
+                  onSelectSession={handleSelectSession}
+                  onNewChat={handleNewChat}
+                  onRenameSession={handleRenameSession}
+                  onDeleteSession={handleDeleteSession}
+                />
+              }
+            />
 
-          <div
-            {...dragHandleProps}
-            className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
+            <div
+              {...dragHandleProps}
+              className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
               hover:bg-gray-200/60 active:bg-gray-300/60 transition-colors duration-150
               ${isDraggingRight ? "bg-gray-200/60" : ""}`}
-          >
-            <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
-          </div>
+            >
+              <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
+            </div>
 
-          <div
-            className="h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60 overflow-hidden shrink-0"
-            style={{ width: rightPanelWidth }}
-          >
-            <DetailPanel
-              panelState={panelState}
-              activeSource={activeSource}
-              activeDocument={activeDocument}
-              loadingDocument={loadingDocument}
-              documentError={documentError}
-              extracting={extractingSourceId !== null}
-              panelMode={panelMode}
-              onBack={handleBack}
-              onReExtract={handleReExtract}
-              onDeleteSource={handleDeleteSource}
-              onSelectDocument={handleSelectDocument}
-              onRetryDocument={handleRetryDocument}
-              onMaximize={handleMaximizePanel}
-              onRestore={handleRestorePanel}
-              onDeleteDocument={handleDeleteDocument}
-            />
-          </div>
-        </>
-      )}
+            <div
+              className="h-full bg-[#F7F7F5] flex flex-col border-l border-gray-200/60 overflow-hidden shrink-0"
+              style={{ width: rightPanelWidth }}
+            >
+              <DetailPanel
+                panelState={panelState}
+                activeSource={activeSource}
+                activeDocument={activeDocument}
+                loadingDocument={loadingDocument}
+                documentError={documentError}
+                extracting={extractingSourceId !== null}
+                panelMode={panelMode}
+                recentTabs={reportTasks}
+                onBack={handleBack}
+                onReExtract={handleReExtract}
+                onDeleteSource={handleDeleteSource}
+                onSelectDocument={handleSelectDocument}
+                onRetryDocument={handleRetryDocument}
+                onMaximize={handleMaximizePanel}
+                onRestore={handleRestorePanel}
+                onDeleteDocument={handleDeleteDocument}
+                onCreateReport={handleCreateReport}
+                onViewReport={handleViewReport}
+              />
+            </div>
+          </>
+        )}
 
-      {/* ── Maximized: [DetailPanel flex-1] [Handle] [Chat fixed right] ── */}
-      {panelMode === "maximized" && (
-        <>
-          <div className="h-full bg-[#F7F7F5] flex flex-col overflow-hidden flex-1 w-0">
-            <DetailPanel
-              panelState={panelState}
-              activeSource={activeSource}
-              activeDocument={activeDocument}
-              loadingDocument={loadingDocument}
-              documentError={documentError}
-              extracting={extractingSourceId !== null}
-              panelMode={panelMode}
-              onBack={handleBack}
-              onReExtract={handleReExtract}
-              onDeleteSource={handleDeleteSource}
-              onSelectDocument={handleSelectDocument}
-              onRetryDocument={handleRetryDocument}
-              onMaximize={handleMaximizePanel}
-              onRestore={handleRestorePanel}
-              onDeleteDocument={handleDeleteDocument}
-            />
-          </div>
+        {/* ── Maximized: [DetailPanel flex-1] [Handle] [Chat fixed right] ── */}
+        {panelMode === "maximized" && (
+          <>
+            <div className="h-full bg-[#F7F7F5] flex flex-col overflow-hidden flex-1 w-0">
+              <DetailPanel
+                panelState={panelState}
+                activeSource={activeSource}
+                activeDocument={activeDocument}
+                loadingDocument={loadingDocument}
+                documentError={documentError}
+                extracting={extractingSourceId !== null}
+                panelMode={panelMode}
+                recentTabs={reportTasks}
+                onBack={handleBack}
+                onReExtract={handleReExtract}
+                onDeleteSource={handleDeleteSource}
+                onSelectDocument={handleSelectDocument}
+                onRetryDocument={handleRetryDocument}
+                onMaximize={handleMaximizePanel}
+                onRestore={handleRestorePanel}
+                onDeleteDocument={handleDeleteDocument}
+                onCreateReport={handleCreateReport}
+                onViewReport={handleViewReport}
+              />
+            </div>
 
-          <div
-            {...chatDragHandleProps}
-            className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
+            <div
+              {...chatDragHandleProps}
+              className={`w-1.5 shrink-0 h-full cursor-col-resize flex items-center justify-center
               hover:bg-gray-200/60 active:bg-gray-300/60 transition-colors duration-150
               ${isDraggingChat ? "bg-gray-200/60" : ""}`}
-          >
-            <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
-          </div>
+            >
+              <div className="w-[3px] h-8 rounded-full bg-gray-300/70" />
+            </div>
 
-          <ChatArea
-            panelMode="maximized"
-            isDragging={isDragging}
-            hasMessages={hasMessages}
-            messages={messages}
-            chatStatus={chatStatus}
-            agentSteps={agentSteps}
-            hasDocs={hasDocs}
-            input={input}
-            checkedDocIds={checkedDocIds}
-            scrollRef={scrollRef}
-            inputRef={inputRef}
-            onInputChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            onSend={handleSend}
-            onStop={handleStop}
-            width={chatSidebarWidth}
-            sessionBar={
-              <SessionBar
-                sessions={sessions}
-                activeSessionId={activeSessionId}
-                loading={sessionsLoading}
-                onSelectSession={handleSelectSession}
-                onNewChat={handleNewChat}
-                onRenameSession={handleRenameSession}
-                onDeleteSession={handleDeleteSession}
-              />
-            }
-          />
-        </>
-      )}
+            <ChatArea
+              panelMode="maximized"
+              isDragging={isDragging}
+              hasMessages={hasMessages}
+              messages={messages}
+              chatStatus={chatStatus}
+              agentSteps={agentSteps}
+              hasDocs={hasDocs}
+              input={input}
+              checkedDocIds={checkedDocIds}
+              scrollRef={scrollRef}
+              inputRef={inputRef}
+              onInputChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onSend={handleSend}
+              onStop={handleStop}
+              width={chatSidebarWidth}
+              sessionBar={
+                <SessionBar
+                  sessions={sessions}
+                  activeSessionId={activeSessionId}
+                  loading={sessionsLoading}
+                  onSelectSession={handleSelectSession}
+                  onNewChat={handleNewChat}
+                  onRenameSession={handleRenameSession}
+                  onDeleteSession={handleDeleteSession}
+                />
+              }
+            />
+          </>
+        )}
+      </div>
+      {/* end three-column area */}
+
+      {/* ══ Report viewer modal ══ */}
+      <ReportViewerModal
+        open={viewingReport !== null}
+        report={viewingReport}
+        onClose={() => setViewingReport(null)}
+      />
 
       {/* ══ Modals ══ */}
       <AddSourceModal
@@ -1360,6 +1500,13 @@ export default function WorkspacePage() {
           setDeleteDocumentId(null);
           setDocumentTitleToDelete("");
         }}
+      />
+
+      <CreateReportModal
+        open={createReportOpen}
+        loading={reportGenerating}
+        onClose={() => setCreateReportOpen(false)}
+        onCreate={handleSubmitReport}
       />
     </div>
   );
