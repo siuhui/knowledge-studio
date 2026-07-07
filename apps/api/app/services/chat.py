@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 from sqlalchemy.orm import Session
 
+from app.core.errors import AppError
 from app.core.telemetry import get_current_trace_id, observe, trace_context, update_current_span
 from app.models.chat_message import ChatMessage
 from app.repositories.message import MessageRepository
@@ -171,13 +172,19 @@ class ChatService:
         )
 
         # ── 1. Resolve session (outside trace_context so new sessions get real IDs) ──
-        if session_id is None:
-            session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
-            session_id = session.id
-        else:
-            session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
-            if reference_document_ids is None:
-                doc_ids = session.reference_document_ids
+        try:
+            if session_id is None:
+                session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
+                session_id = session.id
+            else:
+                session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
+                if reference_document_ids is None:
+                    doc_ids = session.reference_document_ids
+        except AppError as e:
+            logger.warning("session lookup failed", session_id=session_id, error=str(e))
+            yield json.dumps({"type": "error", "message": e.message})
+            yield json.dumps({"type": "done", "persisted": False, "ai_message_id": ""})
+            return
 
         with trace_context(
             user_id=user_id,
@@ -189,7 +196,8 @@ class ChatService:
                 history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
 
                 # ── 2. Persist user message ──
-                user_msg = ChatMessage(session_id=session_id, role="user", content=content)
+                user_msg = ChatMessage(role="user", content=content)
+                session.messages.append(user_msg)
                 MessageRepository.save(db, message=user_msg)
                 db.commit()
 
@@ -257,11 +265,11 @@ class ChatService:
                 ai_msg_id = ""
                 try:
                     ai_msg = ChatMessage(
-                        session_id=session_id,
                         role="assistant",
                         content=full_answer,
                         citations=citations,
                     )
+                    session.messages.append(ai_msg)
                     MessageRepository.save(db, message=ai_msg)
                     db.commit()
                     ai_msg_id = ai_msg.id

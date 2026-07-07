@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.user import User
+from app.services.auth import AuthService
 
 logger = structlog.get_logger(__name__)
 
@@ -45,12 +46,7 @@ def get_current_user(
     db: DbSession,
     token: str = Depends(oauth2_scheme),
 ) -> User:
-    """
-    Dependency that extracts and validates the current user from the JWT token.
-    Binds user_id to structlog context for the request lifecycle.
-    """
-    from app.services.auth import AuthService
-
+    """Extracts and validates the current user from the JWT token."""
     user = AuthService.get_user_from_token(db, token)
     structlog.contextvars.bind_contextvars(user_id=user.id)
     return user

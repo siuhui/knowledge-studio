@@ -7,6 +7,9 @@ import {
   type PresignResponse,
   type SessionDetail,
   type SessionItem,
+  type StudioTaskCreatePayload,
+  type StudioTaskDetail,
+  type StudioTaskItem,
   type UploadCompleteRequest,
   type UploadCompleteResponse,
 } from "./types";
@@ -249,4 +252,90 @@ export async function deleteSession(kbId: string, sessionId: string): Promise<vo
   await api(`/api/v1/knowledge-bases/${kbId}/sessions/${sessionId}`, {
     method: "DELETE",
   });
+}
+
+// ── Studio / Report tasks ──
+
+export async function createStudioTask(
+  kbId: string,
+  payload: StudioTaskCreatePayload,
+): Promise<StudioTaskItem> {
+  const result = await api<StudioTaskItem>(`/api/v1/knowledge-bases/${kbId}/studio/tasks`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return result.data;
+}
+
+export async function getStudioTask(kbId: string, taskId: string): Promise<StudioTaskDetail> {
+  const result = await api<StudioTaskDetail>(
+    `/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}`,
+  );
+  return result.data;
+}
+
+export async function listStudioTasks(
+  kbId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{ data: StudioTaskItem[]; meta: PaginatedMeta }> {
+  return apiPaginated<StudioTaskItem>(
+    `/api/v1/knowledge-bases/${kbId}/studio/tasks?page=${page}&page_size=${pageSize}`,
+  );
+}
+
+export async function deleteStudioTask(kbId: string, taskId: string): Promise<void> {
+  await api(`/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export async function downloadStudioReport(kbId: string, taskId: string): Promise<string> {
+  const requestId = crypto.randomUUID();
+  const token = typeof window !== "undefined" ? localStorage.getItem("kb_access_token") : null;
+  const res = await fetch(
+    `${BASE_URL}/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}/download`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "X-Request-ID": requestId,
+      },
+      redirect: "follow",
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
+    throw new ApiError(err.code, err.message, res.status, requestId);
+  }
+  return res.text();
+}
+
+export async function downloadStudioReportFile(
+  kbId: string,
+  taskId: string,
+  filename: string,
+): Promise<void> {
+  const requestId = crypto.randomUUID();
+  const token = typeof window !== "undefined" ? localStorage.getItem("kb_access_token") : null;
+  const res = await fetch(
+    `${BASE_URL}/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}/download`,
+    {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "X-Request-ID": requestId,
+      },
+      redirect: "follow",
+    },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ code: "NETWORK_ERROR", message: res.statusText }));
+    throw new ApiError(err.code, err.message, res.status, requestId);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".md") ? filename : `${filename}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

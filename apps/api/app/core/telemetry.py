@@ -20,8 +20,9 @@ Spans use ``{domain}.{operation}`` dot-notation:
                   ``index.embed``)
     search.*    — Retrieval: shared by chat and studio (``search.retrieve``)
     agent.*     — Agent runtime (``agent.run``, ``agent.run.stream``)
-    studio.*    — Studio, v0.2.0 (``studio.task``, ``studio.gather``,
-                  ``studio.generate``)
+    studio.*    — Studio (``studio.task`` lifecycle root, child spans:
+                  ``studio.report`` → ``studio.report.plan`` /
+                  ``studio.report.gather`` / ``studio.report.generate``)
 
 LLM and embedding calls are auto-traced by ``langfuse.openai``
 integration — no manual spans needed in ``llm.py`` or ``embedding.py``.

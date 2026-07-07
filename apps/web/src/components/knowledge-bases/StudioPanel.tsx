@@ -128,11 +128,18 @@ function ClockIcon() {
 
 interface StudioPanelProps {
   reports: ReportTask[];
+  selectedDocCount: number;
   onCreateReport: () => void;
   onViewReport: (report: ReportTask) => void;
 }
 
-export function StudioPanel({ reports, onCreateReport, onViewReport }: StudioPanelProps) {
+export function StudioPanel({
+  reports,
+  selectedDocCount,
+  onCreateReport,
+  onViewReport,
+}: StudioPanelProps) {
+  const noSelection = selectedDocCount === 0;
   return (
     <div className="flex-1 overflow-y-auto pb-8 custom-scrollbar">
       {/* Actions */}
@@ -145,6 +152,8 @@ export function StudioPanel({ reports, onCreateReport, onViewReport }: StudioPan
           icon={<ReportIcon />}
           title="Generate Report"
           description="Deep-dive analysis into a structured multi-chapter markdown report"
+          disabled={noSelection}
+          disabledLabel={noSelection ? "No documents selected" : undefined}
           onClick={onCreateReport}
         />
 
@@ -177,17 +186,12 @@ export function StudioPanel({ reports, onCreateReport, onViewReport }: StudioPan
               <button
                 key={report.id}
                 type="button"
-                onClick={() => {
-                  if (report.status === "completed") {
-                    onViewReport(report);
-                  }
-                }}
-                disabled={report.status !== "completed"}
+                onClick={() => onViewReport(report)}
                 className={`w-full text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border transition-all duration-200
                   ${
                     report.status === "completed"
                       ? "border-gray-200/40 bg-white hover:border-gray-300 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04)] cursor-pointer"
-                      : "border-gray-200/40 bg-white opacity-60 cursor-default"
+                      : "border-gray-200/40 bg-white hover:border-gray-300 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04)] cursor-pointer"
                   }`}
               >
                 <div className="shrink-0 w-2 h-2 rounded-full">
@@ -206,7 +210,7 @@ export function StudioPanel({ reports, onCreateReport, onViewReport }: StudioPan
                       ? "Generating…"
                       : report.status === "completed"
                         ? "Completed — click to view"
-                        : "Failed"}
+                        : "Failed — click for details"}
                   </p>
                 </div>
                 <span

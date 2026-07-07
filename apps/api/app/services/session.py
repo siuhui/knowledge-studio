@@ -141,19 +141,12 @@ class SessionService:
 
         now = datetime.now(UTC)
 
-        user_msg = ChatMessage(
-            session_id=session_id,
-            role="user",
-            content=query,
-        )
+        user_msg = ChatMessage(role="user", content=query)
+        session.messages.append(user_msg)
         MessageRepository.save(db, message=user_msg)
 
-        ai_msg = ChatMessage(
-            session_id=session_id,
-            role="assistant",
-            content=answer,
-            citations=citations,
-        )
+        ai_msg = ChatMessage(role="assistant", content=answer, citations=citations)
+        session.messages.append(ai_msg)
         MessageRepository.save(db, message=ai_msg)
 
         # Update last_message_at

@@ -128,12 +128,12 @@ class ObjectStorageService:
                 raise NotFoundError(
                     code=ResponseCode.UPLOAD_OBJECT_NOT_FOUND,
                     message=f"Object not found in storage: {key}",
-                ) from exc
+                )
             raise AppError(
                 code=ResponseCode.STORAGE_UNAVAILABLE,
                 message="Storage is temporarily unavailable",
                 status_code=502,
-            ) from exc
+            )
 
     @staticmethod
     def get(*, key: str) -> bytes:
@@ -153,18 +153,56 @@ class ObjectStorageService:
                 raise NotFoundError(
                     code=ResponseCode.UPLOAD_OBJECT_NOT_FOUND,
                     message=f"Object not found in storage: {key}",
-                ) from exc
+                )
             raise AppError(
                 code=ResponseCode.STORAGE_UNAVAILABLE,
                 message="Storage is temporarily unavailable",
                 status_code=502,
-            ) from exc
+            )
+
+    @staticmethod
+    def put(*, key: str, body: bytes, content_type: str) -> None:
+        """Upload an object from in-memory bytes."""
+        client = _get_client()
+        client.put_object(
+            Bucket=settings.object_storage.bucket,
+            Key=key,
+            Body=body,
+            ContentType=content_type,
+        )
+        logger.info("object stored", key=key, size=len(body))
+
+    @staticmethod
+    def generate_presigned_get(*, key: str, expires: int = 60) -> str:
+        """Generate a presigned GET URL for temporary download access.
+
+        Default expiry is 60 seconds — this is called at download time and the
+        browser follows the 302 redirect immediately, so one minute is plenty.
+        The presign client is used so the generated URL is reachable from the browser.
+        """
+        client = _get_presign_client()
+        url: str = client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings.object_storage.bucket, "Key": key},
+            ExpiresIn=expires,
+        )
+        return url
 
     @staticmethod
     def delete(*, key: str) -> None:
-        """Delete a single object."""
+        """Delete a single object. S3 delete_object is idempotent — no error on non-existent keys.
+
+        Raises AppError(STORAGE_UNAVAILABLE) on storage errors.
+        """
         client = _get_client()
-        client.delete_object(Bucket=settings.object_storage.bucket, Key=key)
+        try:
+            client.delete_object(Bucket=settings.object_storage.bucket, Key=key)
+        except ClientError:
+            raise AppError(
+                code=ResponseCode.STORAGE_UNAVAILABLE,
+                message="Storage is temporarily unavailable",
+                status_code=502,
+            )
         logger.info("object deleted", key=key)
 
     @staticmethod

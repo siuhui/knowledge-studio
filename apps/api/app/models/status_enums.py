@@ -32,3 +32,12 @@ class SourceStatus(StrEnum):
     PENDING = "pending"
     ACTIVE = "active"
     INVALID = "invalid"
+
+
+class StudioTaskStatus(StrEnum):
+    """Studio task lifecycle."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"

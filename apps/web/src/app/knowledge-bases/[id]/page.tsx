@@ -17,13 +17,19 @@ import {
   api,
   apiPaginated,
   completeSourceUpload,
+  createStudioTask,
   deleteSession,
+  deleteStudioTask,
+  downloadStudioReport,
+  downloadStudioReportFile,
   getContentType,
   getDocumentChunks,
   getSession,
+  getStudioTask,
   listKnowledgeBaseDocuments,
   listSessions,
   listSourceDocuments,
+  listStudioTasks,
   presignSourceUpload,
   renameSession,
   sendMessageStream,
@@ -44,6 +50,7 @@ import type {
   Source,
   SourceNode,
   StreamEvent,
+  StudioTaskItem,
 } from "@/lib/types";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -435,6 +442,7 @@ export default function WorkspacePage() {
   const [documentCache, setDocumentCache] = useState<Map<string, DocumentDetail>>(new Map());
   const [loadingDocument, setLoadingDocument] = useState(false);
   const [documentError, setDocumentError] = useState("");
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Chat
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -457,6 +465,9 @@ export default function WorkspacePage() {
 
   // Report viewer modal
   const [viewingReport, setViewingReport] = useState<ReportTask | null>(null);
+
+  // Delete confirmation
+  const [deleteConfirmReport, setDeleteConfirmReport] = useState<ReportTask | null>(null);
 
   // Create report modal
   const [createReportOpen, setCreateReportOpen] = useState(false);
@@ -1012,102 +1023,205 @@ export default function WorkspacePage() {
     }
   }, [deleteDocumentId, documentTitleToDelete, addToast, loadSources]);
 
+  // Clean up poll timer on unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+  }, []);
+
+  // ── Studio: shared poll helper ──
+
+  const pollStudioTask = useCallback(
+    (backendTaskId: string) => {
+      const POLL_INTERVAL = 3000;
+
+      const poll = async () => {
+        try {
+          const updated = await getStudioTask(kbId, backendTaskId);
+
+          if (updated.status === "completed") {
+            const content = await downloadStudioReport(kbId, backendTaskId);
+            setReportTasks((prev) =>
+              prev.map((t) =>
+                t.taskId === backendTaskId ? { ...t, status: "completed", content } : t,
+              ),
+            );
+            setReportGenerating(false);
+            return;
+          }
+
+          if (updated.status === "failed") {
+            setReportTasks((prev) =>
+              prev.map((t) =>
+                t.taskId === backendTaskId
+                  ? { ...t, status: "failed", error: updated.error_message || "Unknown error" }
+                  : t,
+              ),
+            );
+            setReportGenerating(false);
+            return;
+          }
+
+          pollTimerRef.current = setTimeout(poll, POLL_INTERVAL);
+        } catch {
+          setReportTasks((prev) =>
+            prev.map((t) =>
+              t.taskId === backendTaskId ? { ...t, status: "failed", error: "Polling failed" } : t,
+            ),
+          );
+          setReportGenerating(false);
+        }
+      };
+
+      poll();
+    },
+    [kbId],
+  );
+
+  // Load existing tasks from backend on mount
+  useEffect(() => {
+    if (!kbId) return;
+
+    listStudioTasks(kbId, 1, 50)
+      .then(({ data }) => {
+        const mapped: ReportTask[] = data.map((t) => ({
+          id: t.id,
+          taskId: t.id,
+          type: t.task_type === "ppt" ? "ppt" : "report",
+          title: t.title,
+          status:
+            t.status === "completed"
+              ? "completed"
+              : t.status === "failed"
+                ? "failed"
+                : "generating",
+          content: "",
+          error: undefined,
+        }));
+
+        setReportTasks((prev) => {
+          const existingIds = new Set(prev.map((r) => r.taskId));
+          const fresh = mapped.filter((r) => !existingIds.has(r.taskId));
+          return [...prev, ...fresh];
+        });
+
+        for (const task of data) {
+          if (task.status === "pending" || task.status === "running") {
+            pollStudioTask(task.id);
+          }
+        }
+      })
+      .catch(() => {
+        // Silently ignore — UI shows empty state
+      });
+  }, [kbId, pollStudioTask]);
+
   // ── Studio: Create Report ──
   const handleCreateReport = useCallback(() => {
+    if (checkedDocIds.size === 0) return;
     setCreateReportOpen(true);
+  }, [checkedDocIds]);
+
+  const handleSubmitReport = useCallback(
+    (config: ReportConfig) => {
+      setCreateReportOpen(false);
+      setReportGenerating(true);
+
+      const uiId = crypto.randomUUID();
+      const newTask: ReportTask = {
+        id: uiId,
+        taskId: "",
+        type: "report",
+        title: config.title,
+        status: "generating",
+        content: "",
+      };
+
+      setReportTasks((prev) => [...prev, newTask]);
+
+      const docIds = checkedDocIds.size === documents.length ? null : Array.from(checkedDocIds);
+
+      createStudioTask(kbId, {
+        title: config.title,
+        config: {
+          instruction: config.instruction,
+          document_ids: docIds,
+          style: config.style,
+          length: config.length,
+        },
+      })
+        .then((task) => {
+          setReportTasks((prev) =>
+            prev.map((t) => (t.id === uiId ? { ...t, taskId: task.id } : t)),
+          );
+          pollStudioTask(task.id);
+        })
+        .catch((err) => {
+          setReportTasks((prev) =>
+            prev.map((t) =>
+              t.id === uiId
+                ? {
+                    ...t,
+                    status: "failed",
+                    error: err instanceof Error ? err.message : "Failed to create task",
+                  }
+                : t,
+            ),
+          );
+          setReportGenerating(false);
+        });
+    },
+    [kbId, pollStudioTask, checkedDocIds, documents],
+  );
+
+  const handleDeleteReport = useCallback((report: ReportTask) => {
+    setDeleteConfirmReport(report);
   }, []);
 
-  const handleSubmitReport = useCallback((config: ReportConfig) => {
-    setCreateReportOpen(false);
-    setReportGenerating(true);
+  const handleConfirmDeleteReport = useCallback(
+    (report: ReportTask) => {
+      if (report.taskId) {
+        deleteStudioTask(kbId, report.taskId).catch(() => {
+          // Silently ignore — remove from UI regardless
+        });
+      }
+      setReportTasks((prev) => prev.filter((t) => t.id !== report.id));
+      setViewingReport(null);
+      setDeleteConfirmReport(null);
+    },
+    [kbId],
+  );
 
-    const taskId = crypto.randomUUID();
-    const newTask: ReportTask = {
-      id: taskId,
-      type: "report",
-      title: config.title,
-      status: "generating",
-      content: "",
-    };
-
-    setReportTasks((prev) => [...prev, newTask]);
-
-    // Simulate generation — backend Studio API is not yet implemented
-    // TODO: replace with actual API call to POST /api/v1/knowledge-bases/{kb_id}/studio/tasks
-    setTimeout(() => {
-      const mockContent = `# ${config.title}
-
-## Executive Summary
-
-This report provides a comprehensive analysis based on the documents in your knowledge base.
-The following sections explore key findings, patterns, and recommendations.
-
----
-
-## 1. Introduction
-
-Based on the instruction: *"${config.instruction}"*
-
-This report was generated using the **${config.style}** style at **${config.length}** length.
-
-## 2. Key Findings
-
-### 2.1 Document Analysis
-
-The knowledge base contains several documents that were analyzed for this report.
-Key themes and patterns were identified across the source materials.
-
-### 2.2 Cross-Document Patterns
-
-Multiple sources converge on similar conclusions, suggesting strong consensus
-in the knowledge base around the core topics.
-
-## 3. Detailed Analysis
-
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
-incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
-nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-
-### 3.1 Technical Assessment
-
-The technical documentation reveals a well-structured architecture with clear
-separation of concerns. Key components are modular and follow established patterns.
-
-### 3.2 Risk Analysis
-
-Several potential risks were identified during the analysis. These should be
-reviewed and addressed as part of the ongoing development process.
-
-## 4. Recommendations
-
-1. **Continue monitoring** the identified patterns for emerging trends
-2. **Update documentation** to reflect the latest architectural decisions
-3. **Schedule regular reviews** of the knowledge base content for freshness
-4. **Expand coverage** in areas where documentation is sparse
-
-## 5. Conclusion
-
-The knowledge base provides a solid foundation for understanding the system
-architecture and design decisions. Continued investment in documentation
-quality and coverage will yield compounding benefits over time.
-
----
-
-*Report generated by KnowledgeBase Studio · ${config.style} style · ${config.length} length*
-*${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}*
-`;
-
-      setReportTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, status: "completed", content: mockContent } : t)),
-      );
-      setReportGenerating(false);
-    }, 5000);
-  }, []);
+  const handleDownloadReport = useCallback(
+    (report: ReportTask) => {
+      if (report.taskId) {
+        downloadStudioReportFile(kbId, report.taskId, `${report.title}.md`);
+      }
+    },
+    [kbId],
+  );
 
   // ── Report viewer ──
-  const handleViewReport = useCallback((report: ReportTask) => {
-    setViewingReport(report);
-  }, []);
+  const handleViewReport = useCallback(
+    async (report: ReportTask) => {
+      // If completed but content not loaded yet (e.g. loaded from API on mount),
+      // fetch it from the backend before showing the viewer.
+      if (report.status === "completed" && !report.content && report.taskId) {
+        try {
+          const content = await downloadStudioReport(kbId, report.taskId);
+          const updated = { ...report, content };
+          setReportTasks((prev) => prev.map((t) => (t.id === report.id ? updated : t)));
+          setViewingReport(updated);
+          return;
+        } catch {
+          // Still show the viewer — the error state inside handles this
+        }
+      }
+      setViewingReport(report);
+    },
+    [kbId],
+  );
 
   const handleSend = useCallback(async () => {
     const query = input.trim();
@@ -1379,6 +1493,7 @@ quality and coverage will yield compounding benefits over time.
                 extracting={extractingSourceId !== null}
                 panelMode={panelMode}
                 recentTabs={reportTasks}
+                selectedDocCount={checkedDocIds.size}
                 onBack={handleBack}
                 onReExtract={handleReExtract}
                 onDeleteSource={handleDeleteSource}
@@ -1407,6 +1522,7 @@ quality and coverage will yield compounding benefits over time.
                 extracting={extractingSourceId !== null}
                 panelMode={panelMode}
                 recentTabs={reportTasks}
+                selectedDocCount={checkedDocIds.size}
                 onBack={handleBack}
                 onReExtract={handleReExtract}
                 onDeleteSource={handleDeleteSource}
@@ -1468,6 +1584,22 @@ quality and coverage will yield compounding benefits over time.
         open={viewingReport !== null}
         report={viewingReport}
         onClose={() => setViewingReport(null)}
+        onDownload={handleDownloadReport}
+        onDelete={handleDeleteReport}
+      />
+
+      <ConfirmModal
+        open={deleteConfirmReport !== null}
+        title="Delete Report"
+        message={
+          deleteConfirmReport
+            ? `Delete "${deleteConfirmReport.title}"? This will permanently remove the report and its file from storage.`
+            : ""
+        }
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => deleteConfirmReport && handleConfirmDeleteReport(deleteConfirmReport)}
+        onCancel={() => setDeleteConfirmReport(null)}
       />
 
       {/* ══ Modals ══ */}

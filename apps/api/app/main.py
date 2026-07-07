@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api import auth, chat, documents, health, knowledge_bases, sessions, sources, uploads
+from app.api import auth, chat, documents, health, knowledge_bases, sessions, sources, studio, uploads
 from app.config import settings
 from app.core.errors import AppError
 from app.core.exceptions import app_error_handler, general_exception_handler
@@ -70,3 +70,4 @@ app.include_router(documents.router)
 app.include_router(uploads.router)
 app.include_router(chat.router)
 app.include_router(sessions.router)
+app.include_router(studio.router)

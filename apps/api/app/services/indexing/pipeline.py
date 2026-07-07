@@ -22,6 +22,7 @@ from app.repositories.chunk import ChunkRepository
 from app.repositories.document import DocumentRepository
 from app.repositories.document_index_status import DocumentIndexStatusRepository
 from app.services.embedding import embedder
+from app.services.indexing.parser import PARSERS
 
 logger = structlog.get_logger(__name__)
 
@@ -106,8 +107,6 @@ def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: s
         ext = "text"
         source_format = "text"
         title = filename
-
-    from app.services.indexing.parser import PARSERS  # noqa: E402
 
     parser = PARSERS.get(source_format)
     if not parser:

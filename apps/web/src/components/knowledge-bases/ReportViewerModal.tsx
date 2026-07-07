@@ -8,9 +8,17 @@ interface ReportViewerModalProps {
   open: boolean;
   report: ReportTask | null;
   onClose: () => void;
+  onDownload: (report: ReportTask) => void;
+  onDelete: (report: ReportTask) => void;
 }
 
-export function ReportViewerModal({ open, report, onClose }: ReportViewerModalProps) {
+export function ReportViewerModal({
+  open,
+  report,
+  onClose,
+  onDownload,
+  onDelete,
+}: ReportViewerModalProps) {
   return (
     <ModalShell open={open} onClose={onClose}>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: ModalShell handles Escape */}
@@ -35,6 +43,80 @@ export function ReportViewerModal({ open, report, onClose }: ReportViewerModalPr
               )}
             </div>
           </div>
+
+          {/* Actions */}
+          {report && report.status === "completed" && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onDownload(report)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-[#1A1A1A] hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(report)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                Delete
+              </button>
+            </div>
+          )}
+
+          {report && report.status === "failed" && (
+            <button
+              type="button"
+              onClick={() => onDelete(report)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Delete
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onClose}

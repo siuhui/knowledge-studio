@@ -36,6 +36,7 @@ interface DetailPanelProps {
   extracting: boolean;
   panelMode: "normal" | "maximized";
   recentTabs: ReportTask[];
+  selectedDocCount: number;
   onBack: () => void;
   onReExtract: (sourceId: string) => void;
   onDeleteSource: (sourceId: string) => void;
@@ -75,14 +76,23 @@ function SwapLayoutIcon() {
 
 function StudioDetailView({
   recentTabs,
+  selectedDocCount,
   onCreateReport,
   onViewReport,
 }: {
   recentTabs: ReportTask[];
+  selectedDocCount: number;
   onCreateReport: () => void;
   onViewReport: (report: ReportTask) => void;
 }) {
-  return <StudioPanel reports={recentTabs} onCreateReport={onCreateReport} onViewReport={onViewReport} />;
+  return (
+    <StudioPanel
+      reports={recentTabs}
+      selectedDocCount={selectedDocCount}
+      onCreateReport={onCreateReport}
+      onViewReport={onViewReport}
+    />
+  );
 }
 
 // ── Source detail view ──
@@ -238,6 +248,7 @@ export function DetailPanel({
   extracting,
   panelMode,
   recentTabs,
+  selectedDocCount,
   onBack,
   onReExtract,
   onDeleteSource,
@@ -429,7 +440,9 @@ export function DetailPanel({
         {showStudio && (
           <>
             <h3 className="text-sm font-semibold text-[#1A1A1A] tracking-tight">Studio</h3>
-            <p className="text-[11px] text-gray-400 mt-0.5">Generate reports and presentations from your knowledge base</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Generate reports and presentations from your knowledge base
+            </p>
           </>
         )}
       </div>
@@ -454,7 +467,12 @@ export function DetailPanel({
           onSelectDocument={onSelectDocument}
         />
       ) : (
-        <StudioDetailView recentTabs={recentTabs} onCreateReport={onCreateReport} onViewReport={onViewReport} />
+        <StudioDetailView
+          recentTabs={recentTabs}
+          selectedDocCount={selectedDocCount}
+          onCreateReport={onCreateReport}
+          onViewReport={onViewReport}
+        />
       )}
     </aside>
   );

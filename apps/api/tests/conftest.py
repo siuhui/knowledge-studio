@@ -1,17 +1,16 @@
-import os
 from pathlib import Path
 
-# Load test overrides from .env.test (gitignored) — credentials and
-# hostnames stay out of code.
+# .env.test is a complete copy of .env.example with test-specific values
+# (database URL, API keys, etc.). load_dotenv + override=True ensures
+# os.environ has every field, so the dev .env (still read by Settings as
+# env_file) cannot leak any value through.
 from dotenv import load_dotenv
 
 _test_file = Path(__file__).resolve().parent.parent / ".env.test"
 if _test_file.exists():
     load_dotenv(_test_file, override=True)
 
-os.environ.setdefault("KB_ENV", "test")
-
-import pytest  # noqa: E402 — must follow load_dotenv + KB_ENV setdefault
+import pytest  # noqa: E402 — must follow load_dotenv
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402

@@ -62,19 +62,40 @@ export type PanelState =
 
 // ── Studio task types ──
 
-export interface StudioTask {
+export interface StudioTaskItem {
   id: string;
-  task_type: "report" | "ppt";
+  task_type: string;
   title: string;
   status: "pending" | "running" | "completed" | "failed";
   progress: number;
   status_message: string | null;
-  output_s3_key: string | null;
   created_at: string;
+  completed_at: string | null;
+}
+
+export interface StudioTaskDetail extends StudioTaskItem {
+  knowledge_base_id: string;
+  config: Record<string, unknown>;
+  output_metadata: Record<string, unknown> | null;
+  error_message: string | null;
+  started_at: string | null;
+  updated_at: string;
+}
+
+export interface StudioTaskCreatePayload {
+  task_type?: "report";
+  title: string;
+  config: {
+    instruction: string;
+    document_ids?: string[] | null;
+    style?: "professional" | "casual" | "academic";
+    length?: "short" | "medium" | "long";
+  };
 }
 
 export interface ReportTask {
   id: string;
+  taskId: string;
   type: "report" | "ppt";
   title: string;
   status: "generating" | "completed" | "failed";
