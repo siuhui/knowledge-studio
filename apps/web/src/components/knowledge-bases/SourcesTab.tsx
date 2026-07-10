@@ -69,6 +69,9 @@ function SourceTypeIcon({ type }: { type: string }) {
 
 function sourceDisplayName(source: Source): string {
   const config = source.config as Record<string, unknown> | null;
+  if (source.type === "url") {
+    return (config?.url as string) ?? "";
+  }
   return (config?.original_name as string) ?? "";
 }
 

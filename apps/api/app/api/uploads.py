@@ -26,7 +26,7 @@ from app.schemas.upload import (
     UploadCompleteRequest,
     UploadCompleteResponse,
 )
-from app.services.indexing import run_index_pipeline
+from app.services.ingestion import IngestionService
 from app.services.object_storage import ObjectStorageService, sanitize_filename
 from app.services.source import SourceService
 
@@ -187,20 +187,10 @@ def complete_upload(
         "mime_type": content_type,
         "format": suffix,
     }
-    SourceService.update_config_and_activate(db, source_id=source_id, config=config)
+    SourceService.update_config(db, source_id=source_id, config=config)
+    source = SourceService.activate(db, source_id=source_id)
 
-    # Commit is handled by DbSession (scope="function") — runs before
-    # the response is sent and before background tasks fire, so the
-    # indexing task sees the active status.
-
-    # Schedule background indexing (creates its own DB session)
-    background_tasks.add_task(
-        run_index_pipeline,
-        source_id=source_id,
-        kb_id=source.knowledge_base_id,
-        s3_key=payload.object_key,
-        filename=original_filename,
-    )
+    IngestionService.dispatch(source, background_tasks)
 
     logger.info(
         "upload completed and source activated",

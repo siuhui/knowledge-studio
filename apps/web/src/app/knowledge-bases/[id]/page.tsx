@@ -541,12 +541,15 @@ export default function WorkspacePage() {
     const src = sources.find((s) => s.id === panelState.sourceId);
     if (!src) return null;
     const config = src.config as Record<string, unknown> | null;
-    const name = (config?.original_name as string) ?? `Source ${src.id.slice(0, 8)}`;
+    const name =
+      src.type === "url"
+        ? ((config?.url as string) ?? `Source ${src.id.slice(0, 8)}`)
+        : ((config?.original_name as string) ?? `Source ${src.id.slice(0, 8)}`);
     const docs = documentsBySource[src.id] ?? [];
     return {
       id: src.id,
       name,
-      type: src.type as "upload" | "link",
+      type: src.type as "upload" | "url",
       status: src.status,
       createdAt: src.created_at,
       documents: docs.map((d) => ({
@@ -844,7 +847,7 @@ export default function WorkspacePage() {
   );
 
   // Upload flow: create source → presign → browser-to-MinIO → complete → reload
-  const handleAddSourceFromModal = useCallback(
+  const handleAddFile = useCallback(
     async (file: File) => {
       setAddSourceOpen(false);
       setUploading(true);
@@ -869,7 +872,7 @@ export default function WorkspacePage() {
         setUploadStage("Uploading file...");
         await uploadToPresignedUrl(presignResult.upload_url, presignResult.upload_fields, file);
 
-        // Step 4: Notify backend to validate and trigger indexing.
+        // Step 4: Notify backend to validate and trigger ingestion.
         // /complete synchronously transitions source pending → active in the DB.
         setUploadStage("Processing...");
         await completeSourceUpload(created.data.id, {
@@ -880,6 +883,32 @@ export default function WorkspacePage() {
         await loadSources();
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Upload failed";
+        addToast("error", msg);
+        await loadSources();
+      } finally {
+        setUploading(false);
+        setUploadStage("");
+      }
+    },
+    [kbId, addToast, loadSources],
+  );
+
+  // URL import flow: create source → backend fetches + extracts → indexing
+  const handleAddUrl = useCallback(
+    async (url: string) => {
+      setAddSourceOpen(false);
+      setUploading(true);
+      setUploadStage("Fetching and extracting URL...");
+
+      try {
+        await api<Source>(`/api/v1/knowledge-bases/${kbId}/sources`, {
+          method: "POST",
+          body: JSON.stringify({ type: "url", config: { url } }),
+        });
+        addToast("success", "URL added. Extracting content...");
+        await loadSources();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "URL import failed";
         addToast("error", msg);
         await loadSources();
       } finally {
@@ -958,11 +987,11 @@ export default function WorkspacePage() {
     async (sourceId: string) => {
       setExtractingSourceId(sourceId);
       try {
-        await api(`/api/v1/sources/${sourceId}/extract`, { method: "POST" });
-        addToast("success", "Re-extraction started");
+        await api(`/api/v1/sources/${sourceId}/process`, { method: "POST" });
+        addToast("success", "Processing started");
         await loadSources();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Re-extraction failed";
+        const msg = err instanceof Error ? err.message : "Processing failed";
         addToast("error", msg);
       } finally {
         setExtractingSourceId(null);
@@ -1606,7 +1635,8 @@ export default function WorkspacePage() {
       <AddSourceModal
         open={addSourceOpen}
         onClose={() => setAddSourceOpen(false)}
-        onAddSource={handleAddSourceFromModal}
+        onAddFile={handleAddFile}
+        onAddUrl={handleAddUrl}
       />
 
       <ConfirmModal

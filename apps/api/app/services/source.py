@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.response_codes import ResponseCode
+from app.core.security import validate_url
 from app.models.source import Source
 from app.models.status_enums import SourceStatus
 from app.repositories.source import SourceRepository
@@ -11,10 +12,16 @@ from app.services.object_storage import ObjectStorageService
 
 logger = structlog.get_logger(__name__)
 
-SUPPORTED_SOURCE_TYPES = {"upload"}  # v0.1.0 only upload
+SUPPORTED_SOURCE_TYPES = {"upload", "url"}
 
 
 class SourceService:
+    """Source CRUD and config helpers.
+
+    Does NOT know about ingestion — source creation and document ingestion
+    are separate concerns, wired together by the API layer.
+    """
+
     @staticmethod
     def create(
         db: Session,
@@ -24,7 +31,6 @@ class SourceService:
         type: str = "upload",
         config: dict[str, object] | None = None,
     ) -> Source:
-        # Verify ownership
         KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
 
         if type not in SUPPORTED_SOURCE_TYPES:
@@ -38,22 +44,52 @@ class SourceService:
             type=type,
             config=config or {},
         )
+
+        if type == "url":
+            url = (source.config or {}).get("url")
+            if not url or not isinstance(url, str):
+                raise ValidationError(
+                    code=ResponseCode.SOURCE_CONFIG_INVALID,
+                    message="Source config must contain a 'url' string",
+                )
+            validate_url(url)
+            source.config = {**source.config, "url": url}
+            source.status = SourceStatus.ACTIVE
+
         source = SourceRepository.save(db, source=source)
-        logger.info(
-            "source created",
-            source_id=source.id,
-            knowledge_base_id=knowledge_base_id,
-        )
+        logger.info("source created", source_id=source.id, knowledge_base_id=knowledge_base_id)
         return source
 
     @staticmethod
-    def update_config_and_activate(
+    def validate_processable(source: Source) -> None:
+        """Raise if the source status does not allow ingestion."""
+        if source.status not in (SourceStatus.ACTIVE, SourceStatus.INVALID):
+            raise ValidationError(
+                code=ResponseCode.SOURCE_STATUS_INVALID,
+                message=f"Cannot process source in '{source.status}' state",
+            )
+
+    @staticmethod
+    def update_config(
         db: Session,
         *,
         source_id: str,
         config: dict[str, object],
     ) -> Source:
-        """Update source config and transition pending -> active."""
+        """Merge additional fields into source config without changing status."""
+        source = SourceRepository.get_by_id(db, source_id=source_id)
+        if not source:
+            raise NotFoundError(
+                code=ResponseCode.SOURCE_NOT_FOUND,
+                message=f"Source {source_id} not found",
+            )
+        source.config = {**source.config, **config}
+        SourceRepository.save(db, source=source)
+        return source
+
+    @staticmethod
+    def activate(db: Session, *, source_id: str) -> Source:
+        """Transition source from pending → active."""
         source = SourceRepository.get_by_id(db, source_id=source_id)
         if not source:
             raise NotFoundError(
@@ -63,9 +99,8 @@ class SourceService:
         if source.status != SourceStatus.PENDING:
             raise ValidationError(
                 code=ResponseCode.SOURCE_STATUS_INVALID,
-                message=f"Cannot complete upload: source is already {source.status}",
+                message=f"Cannot activate source: status is already {source.status}",
             )
-        source.config = config
         source.status = SourceStatus.ACTIVE
         SourceRepository.save(db, source=source)
         logger.info("source activated", source_id=source_id)
@@ -87,15 +122,28 @@ class SourceService:
                     logger.info("source marked as invalid", source_id=source_id)
 
     @staticmethod
+    def mark_active(*, source_id: str) -> None:
+        """Recover a source from invalid back to active (e.g. after retry succeeds).
+
+        Creates its own DB session — safe for background tasks.
+        """
+        from app.database import SessionLocal
+
+        with SessionLocal() as db:
+            with db.begin():
+                source = db.get(Source, source_id)
+                if source and source.status == SourceStatus.INVALID:
+                    source.status = SourceStatus.ACTIVE
+                    logger.info("source recovered to active", source_id=source_id)
+
+    @staticmethod
     def get_by_id(db: Session, *, source_id: str, user_id: str) -> Source:
-        """Get a source by ID, verifying the requesting user owns its knowledge base."""
         source = SourceRepository.get_by_id(db, source_id=source_id)
         if not source:
             raise NotFoundError(
                 code=ResponseCode.SOURCE_NOT_FOUND,
                 message=f"Source {source_id} not found",
             )
-        # Verify ownership: raises ForbiddenError if user doesn't own the KB
         KnowledgeBaseService.get_by_id(db, knowledge_base_id=source.knowledge_base_id, user_id=user_id)
         return source
 
@@ -108,7 +156,6 @@ class SourceService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Source], int]:
-        # Verify ownership: raises ForbiddenError if user doesn't own the KB
         KnowledgeBaseService.get_by_id(db, knowledge_base_id=knowledge_base_id, user_id=user_id)
         offset = (page - 1) * page_size
         return SourceRepository.list_by_knowledge_base(
@@ -117,35 +164,19 @@ class SourceService:
 
     @staticmethod
     def delete(db: Session, *, source_id: str, user_id: str) -> None:
-        """Delete a source and its MinIO objects.
-
-        Documents are preserved — the DB sets document.source_id = NULL
-        via the FK ON DELETE SET NULL constraint. Only the ingestion
-        artifact is removed; extracted documents and chunks survive.
-
-        Deletes the DB record first (so the transaction can roll back if
-        it fails), then does best-effort MinIO prefix cleanup.
-
-        Uses delete_prefix based on source_id — catches all objects
-        uploaded for this source, including failed/partial uploads.
-        """
         source = SourceService.get_by_id(db, source_id=source_id, user_id=user_id)
 
         prefix = f"uploads/{source.knowledge_base_id}/{source_id}/"
 
-        # Delete source record. Document.source_id is set to NULL by
-        # the FK ON DELETE SET NULL constraint — documents survive.
-        # Chunks survive via Document.chunks cascade (unchanged).
         SourceRepository.delete(db, source=source)
         logger.info("source deleted", source_id=source_id)
 
-        # Best-effort MinIO prefix cleanup. If this fails, the objects become
-        # orphans (cleaned by S3 lifecycle policy or a cron script).
-        try:
-            ObjectStorageService.delete_prefix(prefix=prefix)
-        except Exception:
-            logger.warning(
-                "failed to clean up S3 objects after source delete",
-                prefix=prefix,
-                source_id=source_id,
-            )
+        if source.type == "upload":
+            try:
+                ObjectStorageService.delete_prefix(prefix=prefix)
+            except Exception:
+                logger.warning(
+                    "failed to clean up S3 objects after source delete",
+                    prefix=prefix,
+                    source_id=source_id,
+                )

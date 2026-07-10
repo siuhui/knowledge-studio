@@ -14,7 +14,7 @@ class SourceConfigUpload(BaseModel):
 
 
 class SourceCreate(BaseModel):
-    type: str = Field(default="upload", pattern="^(upload)$")  # v0.1.0 only upload
+    type: str = Field(default="upload", pattern="^(upload|url)$")
     config: dict[str, object] | None = None
 
 

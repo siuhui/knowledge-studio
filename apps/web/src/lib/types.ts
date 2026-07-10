@@ -109,7 +109,7 @@ export interface ReportTask {
 export interface SourceNode {
   id: string;
   name: string;
-  type: "upload" | "link";
+  type: "upload" | "url";
   status: string;
   documents: SourceDocument[];
 }
@@ -131,7 +131,7 @@ export interface FlatDocument {
   id: string;
   sourceId: string | undefined;
   sourceName: string | undefined;
-  sourceType: "upload" | "link" | undefined;
+  sourceType: "upload" | "url" | undefined;
   title: string;
   version: string;
   description: string;

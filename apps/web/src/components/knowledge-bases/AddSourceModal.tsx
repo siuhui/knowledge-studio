@@ -6,10 +6,11 @@ import { ModalShell } from "@/components/ui/ModalShell";
 interface AddSourceModalProps {
   open: boolean;
   onClose: () => void;
-  onAddSource: (file: File) => void;
+  onAddFile: (file: File) => void;
+  onAddUrl: (url: string) => void;
 }
 
-type Tab = "upload" | "link";
+type Tab = "upload" | "url";
 
 const ALLOWED_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".text"];
 
@@ -18,11 +19,21 @@ function checkExtension(filename: string): boolean {
   return ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalProps) {
+function isValidUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function AddSourceModal({ open, onClose, onAddFile, onAddUrl }: AddSourceModalProps) {
   const [tab, setTab] = useState<Tab>("upload");
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  const [url, setUrl] = useState("");
 
   const handleFile = (file: File) => {
     setError("");
@@ -30,7 +41,7 @@ export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalPro
       setError(`Unsupported file type. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}`);
       return;
     }
-    onAddSource(file);
+    onAddFile(file);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -45,6 +56,20 @@ export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalPro
     if (file) handleFile(file);
   };
 
+  const handleAddUrl = () => {
+    setError("");
+    const trimmed = url.trim();
+    if (!trimmed) {
+      setError("Please enter a URL");
+      return;
+    }
+    if (!isValidUrl(trimmed)) {
+      setError("Please enter a valid http:// or https:// URL");
+      return;
+    }
+    onAddUrl(trimmed);
+  };
+
   return (
     <ModalShell open={open} onClose={onClose}>
       <div
@@ -56,7 +81,7 @@ export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalPro
         <div className="px-5 py-4 border-b border-gray-200/60">
           <h2 className="text-sm font-semibold text-[#1A1A1A]">Add Source</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            Upload a file or add a link to extract knowledge
+            Upload a file or add a URL to extract knowledge
           </p>
         </div>
 
@@ -79,16 +104,16 @@ export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalPro
           <button
             type="button"
             onClick={() => {
-              setTab("link");
+              setTab("url");
               setError("");
             }}
             className={`flex-1 py-2.5 text-xs font-medium transition-all duration-200 border-b-2 ${
-              tab === "link"
+              tab === "url"
                 ? "text-[#1A1A1A] border-[#1A1A1A]"
                 : "text-gray-400 border-transparent hover:text-gray-500"
             }`}
           >
-            Add Link
+            Add URL
           </button>
         </div>
 
@@ -150,27 +175,46 @@ export function AddSourceModal({ open, onClose, onAddSource }: AddSourceModalPro
               {error && <p className="text-[11px] text-red-500 mt-2 text-center">{error}</p>}
             </>
           ) : (
-            /* Link tab — coming soon */
-            <div className="py-8 text-center">
-              <svg
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-gray-300 mx-auto mb-3"
-                aria-hidden="true"
+            /* URL input form */
+            <div className="space-y-3">
+              <div>
+                <label
+                  htmlFor="source-url"
+                  className="block text-[11px] font-medium text-gray-500 mb-1"
+                >
+                  Enter a URL to extract
+                </label>
+                <input
+                  id="source-url"
+                  type="url"
+                  placeholder="https://example.com/article"
+                  value={url}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleAddUrl();
+                  }}
+                  className="w-full rounded-lg border border-gray-200/60 bg-white px-3 py-2 text-xs
+                    text-[#2F3437] placeholder-gray-300 outline-none
+                    focus:border-gray-400 focus:ring-1 focus:ring-gray-200
+                    transition-all duration-200"
+                />
+                <p className="text-[10px] text-gray-300 mt-1">
+                  Web pages are extracted to plain text. JavaScript-heavy pages are supported via
+                  browser rendering.
+                </p>
+              </div>
+              {error && <p className="text-[11px] text-red-500">{error}</p>}
+              <button
+                type="button"
+                onClick={handleAddUrl}
+                className="w-full rounded-lg bg-[#1A1A1A] px-3 py-2 text-xs font-medium text-white
+                  hover:bg-[#2F3437] transition-all duration-200"
               >
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              </svg>
-              <p className="text-xs text-gray-400 font-medium">Coming Soon</p>
-              <p className="text-[11px] text-gray-300 mt-1 max-w-xs mx-auto">
-                Link ingestion will be available in a future release. Upload files directly for now.
-              </p>
+                Add URL
+              </button>
             </div>
           )}
         </div>

@@ -1,12 +1,14 @@
 """Document parsers: convert raw bytes → plain text.
 
-Parser Protocol + format registry. v0.1.0 supports PDF, Markdown, plain text.
+Parser Protocol + format registry. Supports PDF, Markdown, plain text, and HTML.
 """
 
+import re
 from typing import Protocol
 
 import charset_normalizer
 import fitz  # PyMuPDF
+import trafilatura
 
 
 class Parser(Protocol):
@@ -37,8 +39,6 @@ class MarkdownParser:
         text = _strip_frontmatter(text)
 
         # Remove image syntax: ![alt](url) and ![alt](url "title")
-        import re
-
         text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
 
         # Remove inline links but keep text: [text](url) → text
@@ -51,6 +51,13 @@ class TextParser:
     def parse(self, raw_bytes: bytes) -> str:
         """Decode plain text with charset detection."""
         return _decode_text(raw_bytes)
+
+
+class HtmlParser:
+    def parse(self, raw_bytes: bytes) -> str:
+        """Extract main content from HTML using trafilatura."""
+        text = trafilatura.extract(raw_bytes, include_links=False, output_format="txt")
+        return text or ""
 
 
 def _decode_text(raw_bytes: bytes) -> str:
@@ -83,4 +90,5 @@ PARSERS: dict[str, Parser] = {
     "pdf": PdfParser(),
     "markdown": MarkdownParser(),
     "text": TextParser(),
+    "html": HtmlParser(),
 }

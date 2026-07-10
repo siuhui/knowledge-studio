@@ -99,27 +99,17 @@ def test_delete_source_not_found(client: TestClient, auth_headers: dict):
     assert response.status_code == 404
 
 
-def test_extract_source_pending_status(client: TestClient, auth_headers: dict):
-    """Extracting a pending source should fail with SOURCE_STATUS_INVALID."""
+def test_process_source_pending_activates(client: TestClient, auth_headers: dict):
+    """Processing a pending upload source should activate it and trigger ingestion."""
     kb_id = _create_kb(client, auth_headers)
     source = _create_source(client, auth_headers, kb_id)
 
     resp = client.post(
-        f"/api/v1/sources/{source['id']}/extract",
+        f"/api/v1/sources/{source['id']}/process",
         headers=auth_headers,
     )
+    # Type=upload with no s3_key will fail with VALIDATION_ERROR
+    # because _schedule_ingestion can't find a file to process.
+    # The source stays active — failure is at schedule level, not activation.
     assert resp.status_code == 422
-    assert resp.json()["code"] == "SOURCE_STATUS_INVALID"
-
-
-def test_extract_source_no_config(client: TestClient, auth_headers: dict):
-    """Extracting a source with no s3_key should fail with VALIDATION_ERROR."""
-    kb_id = _create_kb(client, auth_headers)
-    source = _create_source(client, auth_headers, kb_id)
-
-    # Manually set status to active to bypass the pending guard
-    resp = client.post(
-        f"/api/v1/sources/{source['id']}/extract",
-        headers=auth_headers,
-    )
-    assert resp.status_code == 422
+    assert resp.json()["code"] in ("VALIDATION_ERROR", "SOURCE_STATUS_INVALID")

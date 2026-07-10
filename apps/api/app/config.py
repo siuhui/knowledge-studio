@@ -66,6 +66,16 @@ class TelemetryConfig(BaseSettings):
     release: str | None = None  # LANGFUSE_RELEASE
 
 
+class IngestionConfig(BaseSettings):
+    """Web content ingestion configuration."""
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    trafilatura_timeout: int = 30
+    playwright_timeout: int = 30_000  # ms
+    fallback_ratio: float = 0.2  # trafilatura extraction ratio below which Playwright is triggered
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="KB_",
@@ -90,6 +100,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig
     object_storage: ObjectStorageConfig
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     cors_origins: list[str]
 
     auto_create_tables: bool = False

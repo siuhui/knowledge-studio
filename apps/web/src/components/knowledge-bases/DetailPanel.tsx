@@ -21,7 +21,7 @@ export interface DetailSourceDocument {
 export interface DetailSourceDetail {
   id: string;
   name: string;
-  type: "upload" | "link";
+  type: "upload" | "url";
   status: string;
   createdAt: string;
   documents: DetailSourceDocument[];
@@ -197,7 +197,7 @@ function SourceDetailView({
               >
                 <path d="M21 12a9 9 0 1 1-6.219-8.56" />
               </svg>
-              Extracting…
+              Processing…
             </>
           ) : (
             <>
@@ -217,7 +217,7 @@ function SourceDetailView({
                 <line x1="8" y1="11" x2="14" y2="11" />
                 <line x1="11" y1="8" x2="11" y2="14" />
               </svg>
-              Re-extract
+              Re-process
             </>
           )}
         </button>
@@ -419,7 +419,7 @@ export function DetailPanel({
             </button>
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-200/70 text-gray-500 shrink-0">
-                {activeSource.type === "upload" ? "FILE" : "LINK"}
+                {activeSource.type === "upload" ? "FILE" : "URL"}
               </span>
               <StatusBadge status={activeSource.status} />
             </div>

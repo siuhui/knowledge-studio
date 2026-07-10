@@ -1,12 +1,12 @@
-"""Indexing pipeline: parse → chunk → embed.
+"""Indexing pipeline: chunk → embed.
 
-Three-stage design so re-chunking doesn't require re-parsing the original file:
-  Stage 1 — parse_document():  parse raw bytes → persist full_text on Document
-  Stage 2 — chunk_document():  read full_text → chunk → create Chunks (embedding=None)
-  Stage 3 — embed_document():  read unembedded chunks → batch embed → write embeddings
+Two-stage design:
+  Stage 1 — chunk_document():  read full_text → chunk → create Chunks (embedding=None)
+  Stage 2 — embed_document():  read unembedded chunks → batch embed → write embeddings
+
+Document creation (parse + dedup) lives in services/ingestion/.
 """
 
-import hashlib
 import re
 from datetime import UTC, datetime
 
@@ -16,13 +16,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.core.telemetry import observe, update_current_span
 from app.models.chunk import Chunk
-from app.models.document import Document
-from app.models.status_enums import DocumentStatus, IndexStageStatus
+from app.models.status_enums import IndexStageStatus
 from app.repositories.chunk import ChunkRepository
 from app.repositories.document import DocumentRepository
 from app.repositories.document_index_status import DocumentIndexStatusRepository
 from app.services.embedding import embedder
-from app.services.indexing.parser import PARSERS
 
 logger = structlog.get_logger(__name__)
 
@@ -78,104 +76,17 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
     return chunks
 
 
-# ── Stage 1: Parse ───────────────────────────────────────────────────────────
-
-
-@observe(name="index.parse", capture_input=False, capture_output=False)
-def parse_document(db: Session, *, raw_bytes: bytes, filename: str, source_id: str, kb_id: str) -> str:
-    """Stage 1: Parse raw bytes → create Document with full_text.
-
-    Creates the Document with status=PROCESSING before parsing so the
-    frontend can show "解析中…" during heavy extraction (e.g. PDF).
-    On success the status transitions to READY.  Dedup is checked
-    against this KB after parsing — if a duplicate is found, the
-    just-created record is deleted and the existing one returned.
-
-    Returns the document ID.
-    """
-    update_current_span(
-        input={"filename": filename, "source_id": source_id, "kb_id": kb_id},
-    )
-    # ── Determine format and strip recognized extension from title ──
-    if "." in filename:
-        name_part, ext_part = filename.rsplit(".", 1)
-        ext = ext_part.lower()
-        format_map = {"pdf": "pdf", "md": "markdown", "markdown": "markdown", "txt": "text"}
-        source_format = format_map.get(ext, "text")
-        title = name_part if ext in format_map else filename
-    else:
-        ext = "text"
-        source_format = "text"
-        title = filename
-
-    parser = PARSERS.get(source_format)
-    if not parser:
-        raise ValueError(f"No parser for format: {source_format}")
-
-    # ── Create placeholder so frontend sees "processing" during parse ──
-    document = Document(
-        source_id=source_id,
-        knowledge_base_id=kb_id,
-        title=title,
-        path=filename,
-        source_format=source_format,
-        full_text="",
-        text_hash="",
-        status=DocumentStatus.PROCESSING,
-    )
-    document = DocumentRepository.save(db, document=document)
-
-    # ── Parse (heavy work — PDF extraction) ──
-    text = parser.parse(raw_bytes)
-    if not text.strip():
-        logger.warning("parsed content is empty", filename=filename)
-
-    # ── Dedup check (within this KB) ──
-    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-    existing = DocumentRepository.get_by_text_hash(db, text_hash=text_hash, knowledge_base_id=kb_id)
-    if existing and existing.id != document.id:
-        logger.info(
-            "text hash match, removing duplicate",
-            document_id=existing.id,
-            filename=filename,
-        )
-        # Remove the placeholder we just created
-        db.delete(document)
-        db.flush()
-        update_current_span(
-            output={"document_id": existing.id, "dedup": True},
-        )
-        return existing.id
-
-    # ── Fill in parsed content and transition to ready ──
-    document.full_text = text
-    document.text_hash = text_hash
-    document.status = DocumentStatus.READY
-    db.flush()
-
-    logger.info(
-        "document parsed",
-        document_id=document.id,
-        text_length=len(text),
-    )
-
-    update_current_span(output={"document_id": document.id})
-    return document.id
-
-
-# ── Stage 2: Chunk ────────────────────────────────────────────────────────────
+# ── Stage 1: Chunk ────────────────────────────────────────────────────────────
 
 
 @observe(name="index.chunk", capture_input=False, capture_output=False)
 def chunk_document(db: Session, *, document_id: str) -> int:
-    """Stage 2: Read Document.full_text → chunk → create Chunks.
+    """Read Document.full_text → chunk → create Chunks.
 
     Idempotent — skips if chunks already exist so re-running the pipeline
     after a partial failure doesn't delete partially-embedded chunks.
 
     Manages DocumentIndexStatus.chunk_status.
-
     Returns the number of chunks (existing or newly created).
     """
     update_current_span(input={"document_id": document_id})
@@ -186,7 +97,6 @@ def chunk_document(db: Session, *, document_id: str) -> int:
 
     index_status = DocumentIndexStatusRepository.get_or_create(db, document_id=document_id)
 
-    # Skip if already chunked (idempotent — safe to re-run)
     existing_count = ChunkRepository.count_by_document(db, document_id=document_id)
     if existing_count > 0:
         logger.info("chunks already exist, skipping", document_id=document_id, chunk_count=existing_count)
@@ -194,21 +104,18 @@ def chunk_document(db: Session, *, document_id: str) -> int:
             index_status.chunk_status = IndexStageStatus.DONE
             index_status.chunk_count = existing_count
             index_status.chunked_at = datetime.now(UTC)
-            db.flush()
+            DocumentIndexStatusRepository.save(db, status=index_status)
         update_current_span(output={"chunk_count": existing_count, "cached": True})
         return existing_count
 
-    # Mark chunk as running
     index_status.chunk_status = IndexStageStatus.RUNNING
-    db.flush()
+    DocumentIndexStatusRepository.save(db, status=index_status)
 
-    # Chunk from persisted full_text (no reparse needed)
     chunk_texts = _chunk_text(document.full_text)
     if not chunk_texts:
         logger.warning("no chunks generated", document_id=document_id)
-        chunk_texts = [document.full_text]  # fallback
+        chunk_texts = [document.full_text]
 
-    # Create Chunk records
     chunk_records = []
     for i, chunk_text in enumerate(chunk_texts):
         chunk = Chunk(
@@ -222,62 +129,51 @@ def chunk_document(db: Session, *, document_id: str) -> int:
 
     ChunkRepository.save_batch(db, chunks=chunk_records)
 
-    # Mark chunk as done
     index_status.chunk_status = IndexStageStatus.DONE
     index_status.chunk_count = len(chunk_records)
     index_status.chunked_at = datetime.now(UTC)
-    db.flush()
+    DocumentIndexStatusRepository.save(db, status=index_status)
 
-    logger.info(
-        "document chunked",
-        document_id=document_id,
-        chunk_count=len(chunk_records),
-    )
+    logger.info("document chunked", document_id=document_id, chunk_count=len(chunk_records))
 
     chunk_count = len(chunk_records)
     update_current_span(output={"chunk_count": chunk_count})
     return chunk_count
 
 
-# ── Stage 3: Embed ──────────────────────────────────────────────────────────────
+# ── Stage 2: Embed ──────────────────────────────────────────────────────────────
 
 
 @observe(name="index.embed", capture_input=False, capture_output=False)
 def embed_document(db: Session, *, document_id: str) -> int:
-    """Stage 3: Embed unembedded chunks for a document.
+    """Embed unembedded chunks for a document.
 
-    Reads chunks via ChunkRepository, filters to unembedded only
-    (resume-safe — skips already-embedded chunks), batches them,
+    Filters to unembedded only (resume-safe), batches them,
     calls the embedder, and writes embeddings back.
 
     Manages DocumentIndexStatus.embed_status.
-
     Returns the number of chunks embedded.
     """
-    update_current_span(
-        input={"document_id": document_id},
-    )
+    update_current_span(input={"document_id": document_id})
 
     chunks = ChunkRepository.list_by_document(db, document_id=document_id)
     index_status = DocumentIndexStatusRepository.get_or_create(db, document_id=document_id)
 
-    # Only embed chunks without embeddings (resume-safe)
     unembedded = [c for c in chunks if c.embedding is None]
     if not unembedded:
         logger.info("all chunks already embedded", document_id=document_id)
         if index_status.embed_status != IndexStageStatus.DONE:
             index_status.embed_status = IndexStageStatus.DONE
-            index_status.embed_count = len(chunks)  # total chunks
+            index_status.embed_count = len(chunks)
             index_status.embedded_at = datetime.now(UTC)
             index_status.embedding_model = settings.embedding.model
-            db.flush()
+            DocumentIndexStatusRepository.save(db, status=index_status)
         update_current_span(output={"embedded_count": 0, "cached": True})
         return 0
 
-    # Mark embed as running
     index_status.embed_status = IndexStageStatus.RUNNING
     index_status.embedding_model = settings.embedding.model
-    db.flush()
+    DocumentIndexStatusRepository.save(db, status=index_status)
 
     batch_size = settings.embedding.batch_size
     total_embedded = 0
@@ -292,31 +188,53 @@ def embed_document(db: Session, *, document_id: str) -> int:
             chunk.embedding = embedding
 
         total_embedded += len(batch)
-        db.flush()
-        logger.debug(
-            "embedding batch",
-            document_id=document_id,
-            batch_start=i,
-            batch_size=len(batch),
-        )
+        logger.debug("embedding batch", document_id=document_id, batch_start=i, batch_size=len(batch))
 
-    # Mark embed as done
     index_status.embed_status = IndexStageStatus.DONE
-    index_status.embed_count = len(chunks)  # total chunks with embeddings now
+    index_status.embed_count = len(chunks)
     index_status.embedded_at = datetime.now(UTC)
-    db.flush()
+    DocumentIndexStatusRepository.save(db, status=index_status)
 
-    logger.info(
-        "document embedded",
-        document_id=document_id,
-        chunk_count=total_embedded,
-    )
+    logger.info("document embedded", document_id=document_id, chunk_count=total_embedded)
 
     update_current_span(output={"embedded_count": total_embedded, "model": settings.embedding.model})
     return total_embedded
 
 
-# ── Background task (orchestrates all three stages) ───────────────────────────
+# ── Shared chunk + embed helper ──────────────────────────────────────────────
+
+
+def _run_chunk_embed(db: Session, *, document_id: str, source_id: str) -> tuple[int, int]:
+    """Run chunk and embed stages. Returns (chunk_count, embed_count)."""
+    logger.info("indexing started", source_id=source_id, document_id=document_id)
+
+    # Stage 1: Chunk
+    try:
+        chunk_count = chunk_document(db, document_id=document_id)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("chunk failed", document_id=document_id)
+        _mark_index_failed(document_id=document_id, stage="chunk", error_message=str(e))
+        update_current_span(level="ERROR", status_message="Chunk stage failed")
+        raise
+
+    logger.info("chunk completed", document_id=document_id, chunk_count=chunk_count)
+
+    # Stage 2: Embed
+    try:
+        embed_count = embed_document(db, document_id=document_id)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("embed failed", document_id=document_id)
+        _mark_index_failed(document_id=document_id, stage="embed", error_message=str(e))
+        update_current_span(level="ERROR", status_message="Embed stage failed")
+        raise
+
+    logger.info("embed completed", document_id=document_id, embed_count=embed_count)
+    logger.info("index pipeline completed", source_id=source_id, document_id=document_id)
+    return chunk_count, embed_count
 
 
 def _mark_index_failed(*, document_id: str | None, stage: str, error_message: str) -> None:
@@ -350,73 +268,23 @@ def _mark_index_failed(*, document_id: str | None, stage: str, error_message: st
             )
 
 
-def run_index_pipeline(source_id: str, kb_id: str, s3_key: str, filename: str) -> None:
-    """Background task: download from MinIO → parse → chunk → embed.
-
-    Each stage commits independently — a failure in one stage does not
-    roll back completed earlier stages.  Re-running via /extract resumes
-    from the first incomplete stage.
+def run_index_pipeline(source_id: str, kb_id: str, document_id: str) -> None:
+    """Background task: chunk → embed for an already-created Document.
 
     Runs in an independent background thread (FastAPI BackgroundTasks).
     ``@observe`` creates a root span; the decorator degrades to a
     pass-through when telemetry is disabled.
     """
     from app.database import SessionLocal
-    from app.services.object_storage import ObjectStorageService
 
     @observe(name="index.pipeline", capture_input=False, capture_output=False)
     def _pipeline() -> None:
         db = SessionLocal()
-        document_id: str | None = None
         update_current_span(
-            input={"source_id": source_id, "kb_id": kb_id, "filename": filename},
+            input={"source_id": source_id, "kb_id": kb_id, "document_id": document_id},
         )
         try:
-            # ── Stage 1: Download + Parse (auto-traced via @observe) ──
-            try:
-                raw_bytes = ObjectStorageService.get(key=s3_key)
-                document_id = parse_document(
-                    db,
-                    raw_bytes=raw_bytes,
-                    filename=filename,
-                    source_id=source_id,
-                    kb_id=kb_id,
-                )
-                db.commit()
-            except Exception:
-                db.rollback()
-                logger.exception("stage 1 (parse) failed", source_id=source_id)
-                update_current_span(level="ERROR", status_message="Stage 1 (parse) failed")
-                return
-
-            logger.info("stage 1 (parse) completed", source_id=source_id, document_id=document_id)
-
-            # ── Stage 2: Chunk (auto-traced via @observe) ──
-            try:
-                chunk_count = chunk_document(db, document_id=document_id)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.exception("stage 2 (chunk) failed", document_id=document_id)
-                _mark_index_failed(document_id=document_id, stage="chunk", error_message=str(e))
-                update_current_span(level="ERROR", status_message="Stage 2 (chunk) failed")
-                return
-
-            logger.info("stage 2 (chunk) completed", document_id=document_id, chunk_count=chunk_count)
-
-            # ── Stage 3: Embed (auto-traced via @observe) ──
-            try:
-                embed_count = embed_document(db, document_id=document_id)
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logger.exception("stage 3 (embed) failed", document_id=document_id)
-                _mark_index_failed(document_id=document_id, stage="embed", error_message=str(e))
-                update_current_span(level="ERROR", status_message="Stage 3 (embed) failed")
-                return
-
-            logger.info("stage 3 (embed) completed", document_id=document_id, embed_count=embed_count)
-            logger.info("index pipeline completed", source_id=source_id, document_id=document_id)
+            chunk_count, embed_count = _run_chunk_embed(db, document_id=document_id, source_id=source_id)
             update_current_span(
                 output={
                     "document_id": document_id,
@@ -424,7 +292,8 @@ def run_index_pipeline(source_id: str, kb_id: str, s3_key: str, filename: str) -
                     "embed_count": embed_count,
                 },
             )
-
+        except Exception:
+            pass  # _run_chunk_embed already logs + marks failed
         finally:
             db.close()
 
