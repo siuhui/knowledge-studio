@@ -31,6 +31,7 @@ import {
   listSourceDocuments,
   listStudioTasks,
   presignSourceUpload,
+  processSource,
   renameSession,
   sendMessageStream,
   uploadToPresignedUrl,
@@ -901,12 +902,13 @@ export default function WorkspacePage() {
       setUploadStage("Fetching and extracting URL...");
 
       try {
-        await api<Source>(`/api/v1/knowledge-bases/${kbId}/sources`, {
+        const created = await api<Source>(`/api/v1/knowledge-bases/${kbId}/sources`, {
           method: "POST",
           body: JSON.stringify({ type: "url", config: { url } }),
         });
         addToast("success", "URL added. Extracting content...");
         await loadSources();
+        await processSource(created.data.id);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "URL import failed";
         addToast("error", msg);
@@ -987,7 +989,7 @@ export default function WorkspacePage() {
     async (sourceId: string) => {
       setExtractingSourceId(sourceId);
       try {
-        await api(`/api/v1/sources/${sourceId}/process`, { method: "POST" });
+        await processSource(sourceId);
         addToast("success", "Processing started");
         await loadSources();
       } catch (err) {

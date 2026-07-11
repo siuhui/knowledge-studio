@@ -1,9 +1,9 @@
 "use client";
 
 import { MarkdownContent } from "@/components/ui/MarkdownContent";
-import { getDocument } from "@/lib/api";
+import { getDocumentFullText } from "@/lib/api";
 import type { DocumentDetail } from "@/lib/types";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBadge } from "./StatusBadge";
 
 // ── Processing state ──
@@ -98,26 +98,31 @@ function ContentView({ document }: { document: DocumentDetail }) {
   const [fullText, setFullText] = useState<string | null>(null);
   const [fullTextLoading, setFullTextLoading] = useState(false);
 
-  // Lazily fetch full_text for the reading view.  Chunk data is still used
-  // for the detail/inspection view and metadata (chunk_count, etc.).
-  const loadFullText = useCallback(async () => {
-    if (fullText || fullTextLoading) return;
-    setFullTextLoading(true);
-    try {
-      const detail = await getDocument(document.id, true);
-      setFullText(detail.full_text ?? null);
-    } catch {
-      // Fall back to chunk-join only if full_text fails
-    } finally {
-      setFullTextLoading(false);
-    }
-  }, [document.id, fullText, fullTextLoading]);
-
+  // Fetch full_text on mount.  The parent uses document.id as the
+  // component key, so mount = fresh document — no manual state reset.
   useEffect(() => {
-    if (!showDetails) {
-      loadFullText();
-    }
-  }, [showDetails, loadFullText]);
+    let cancelled = false;
+    const load = async () => {
+      setFullTextLoading(true);
+      try {
+        const result = await getDocumentFullText(document.id);
+        if (!cancelled) {
+          setFullText(result.full_text ?? document.chunks.map((c) => c.content).join("\n"));
+        }
+      } catch {
+        if (!cancelled) {
+          setFullText(document.chunks.map((c) => c.content).join("\n"));
+        }
+      } finally {
+        if (!cancelled) setFullTextLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [document.id, document.chunks]);
+
+  const chunkJoin = document.chunks.map((c) => c.content).join("\n");
+  const readingContent = fullText ?? chunkJoin;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -160,9 +165,9 @@ function ContentView({ document }: { document: DocumentDetail }) {
             <div className="w-5 h-5 border-2 border-gray-200 border-t-[#1A1A1A] rounded-full animate-spin" />
           </div>
         ) : (
-          /* ── Reading view: canonical full_text, no chunk join ── */
+          /* ── Reading view: canonical full_text, fallback to chunk join ── */
           <MarkdownContent
-            content={fullText ?? ""}
+            content={readingContent}
             className="text-sm text-[#2F3437] leading-relaxed break-words"
           />
         )}
@@ -330,7 +335,7 @@ export function DocumentContentView({
     <div className="flex-1 overflow-y-auto custom-scrollbar">
       {/* Body */}
       {isReady && document.chunks.length > 0 ? (
-        <ContentView document={document} />
+        <ContentView key={document.id} document={document} />
       ) : (
         <ProcessingView document={document} />
       )}

@@ -116,19 +116,12 @@ def _safe_to_full(safe_pos: int, replacements: list[_Replacement]) -> int:
         elif safe_pos > r.safe_start:
             # Inside a placeholder — shouldn't happen (chunk boundaries
             # never land inside placeholders), but handle gracefully.
-            full_pos = r.orig_start + (safe_pos - r.safe_start)
+            # Undo the prior replacements' accumulated delta from full_pos
+            # to get back to the original position *before* this placeholder.
+            full_pos = full_pos + (safe_pos - r.safe_start) - (r.safe_start - r.orig_start)
             return full_pos
     return full_pos
 
-
-def _restore_code_blocks(chunks: list[str], blocks: list[str]) -> list[str]:
-    """Replace numbered placeholders with the original code blocks."""
-    result: list[str] = []
-    for chunk in chunks:
-        for i, block in enumerate(blocks):
-            chunk = chunk.replace(f"{{CODEBLOCK_{i}}}", block)
-        result.append(chunk)
-    return result
 
 
 # ── Heading-aware splitting ────────────────────────────────────────────────
@@ -265,7 +258,7 @@ def _repair_heading_orphans(
             result.append((piece, p_start, p_end))
             i += 1
         elif next_is_heading:
-            result.append((next_text + "\n\n" + piece, next_start, p_end))
+            result.append((piece + "\n\n" + next_text, p_start, next_end))
             i += 2
         else:
             result.append((piece + "\n\n" + next_text, p_start, next_end))
@@ -460,9 +453,9 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
             ))
 
     # 5. Restore code blocks in chunk content
+    _code_block_sub = re.compile(r"\{CODEBLOCK_(\d+)\}")
     for c in candidates:
-        for i, block in enumerate(code_blocks):
-            c.text = c.text.replace(f"{{CODEBLOCK_{i}}}", block)
+        c.text = _code_block_sub.sub(lambda m: code_blocks[int(m.group(1))], c.text)
 
     return candidates
 

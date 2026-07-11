@@ -139,6 +139,10 @@ export async function completeSourceUpload(
   return result.data;
 }
 
+export async function processSource(sourceId: string): Promise<void> {
+  await api(`/api/v1/sources/${sourceId}/process`, { method: "POST" });
+}
+
 export async function listSourceDocuments(sourceId: string): Promise<Document[]> {
   const result = await apiPaginated<Document>(
     `/api/v1/sources/${sourceId}/documents?page=1&page_size=50`,
@@ -158,12 +162,12 @@ export async function getDocumentChunks(documentId: string): Promise<DocumentDet
   return result.data;
 }
 
-export async function getDocument(
+export async function getDocumentFullText(
   documentId: string,
-  includeFullText = false,
-): Promise<DocumentDetail> {
-  const params = includeFullText ? "?include_full_text=true" : "";
-  const result = await api<DocumentDetail>(`/api/v1/documents/${documentId}${params}`);
+): Promise<{ full_text: string | null }> {
+  const result = await api<{ full_text: string | null }>(
+    `/api/v1/documents/${documentId}?include_full_text=true`,
+  );
   return result.data;
 }
 

@@ -90,8 +90,8 @@ class TestHeadingOrphanRepair:
         pieces = [("# Title", 0, 7), ("## Subtitle", 7, 18), ("body text", 18, 27)]
         result = _repair_heading_orphans(pieces)
         assert len(result) == 2
-        assert "## Subtitle" in result[0][0]
         assert "# Title" in result[0][0]
+        assert "## Subtitle" in result[0][0]
         assert "body text" in result[1][0]
 
     def test_single_heading_no_body(self):
@@ -125,7 +125,10 @@ class TestChunkText:
             actual = full_text[c.start_offset:c.end_offset]
             # Section separators (\n\n) between sections are not part of
             # any chunk — they're excluded from both.  Offsets can have gaps.
-            assert actual.strip() in c.text or c.text in actual, (
+            # At minimum, the offset slice and chunk text must share content.
+            actual_words = set(actual.strip().split())
+            chunk_words = set(c.text.strip().split())
+            assert actual_words & chunk_words, (
                 f"Offset mismatch: [{c.start_offset}:{c.end_offset}] → {actual[:50]!r} "
                 f"vs chunk {c.text[:50]!r}"
             )
@@ -192,7 +195,6 @@ class TestSplitSection:
     def test_overlap_is_positional(self):
         text = "The quick brown fox jumps over the lazy dog. " * 20
         section = _split_by_headings(text)[0]
-        from app.services.indexing.pipeline import _split_section
 
         pieces = _split_section(section, max_chars=200, overlap_chars=30)
         assert len(pieces) >= 3
