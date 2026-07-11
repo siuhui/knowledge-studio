@@ -19,6 +19,8 @@ def build_citations(results: list[tuple[Chunk, Document, float]]) -> list[Citati
                 document_title=doc.title,
                 chunk_index=chunk.chunk_index,
                 content_snippet=chunk.content[:200],
+                start_offset=chunk.start_offset,
+                end_offset=chunk.end_offset,
             )
         )
     return citations

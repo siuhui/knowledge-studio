@@ -82,6 +82,7 @@ class HybridSearchStrategy:
                     content=chunk.content,
                     score=score,
                     document_title=doc.title,
+                    section_path=chunk.section_path if isinstance(chunk.section_path, list) else [],
                     citation=build_citations([(chunk, doc, score)])[0],
                 )
             )

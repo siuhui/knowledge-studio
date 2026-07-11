@@ -35,6 +35,10 @@ export interface DocumentChunk {
   chunk_index: number;
   content: string;
   token_count: number;
+  start_offset: number;
+  end_offset: number;
+  section_path: string[];
+  heading_level: number;
 }
 
 /** Full document detail returned by GET /api/v1/documents/{id}/chunks */
@@ -51,6 +55,7 @@ export interface DocumentDetail {
   chunk_count: number;
   truncated: boolean;
   chunks: DocumentChunk[];
+  full_text?: string;
 }
 
 // ── Panel state (workspace right panel) ──
@@ -162,6 +167,8 @@ export interface Citation {
   document_title: string;
   chunk_index: number;
   content_snippet: string;
+  start_offset: number;
+  end_offset: number;
 }
 
 export interface RetrievalChunk {

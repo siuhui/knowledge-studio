@@ -236,7 +236,7 @@ DELETE /api/v1/knowledge-bases/{kb_id}/sessions/{id}          删除会话
 
 | 阶段 | 方式 | 说明 |
 |------|------|------|
-| v0.x（开发） | `Base.metadata.create_all()` | 配置开关 `KB_AUTO_CREATE_TABLES=true`，每次启动自动创建 |
+| v0.x（开发） | `Base.metadata.create_all()` + 手动删表 | 无生产数据，schema 变更直接改 Model 文件，删库重建即可。**不需要 Alembic 迁移、不需要兼容旧数据。** 配置开关 `KB_AUTO_CREATE_TABLES=true` |
 | v1.0（上线） | Alembic | Schema 稳定、有真实数据后引入迁移管理 |
 
 启动时由 `main.py` lifespan 控制：

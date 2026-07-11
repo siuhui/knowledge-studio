@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.core.response_codes import ResponseCode
 from app.dependencies import CurrentUser, DbSession
@@ -16,12 +16,16 @@ def get_document(
     db: DbSession,
     current_user: CurrentUser,
     document_id: str,
+    include_full_text: bool = Query(False, description="Include the full parsed text for rendering"),
 ) -> ApiResponse[dict[str, Any]]:
     document = DocumentService.get_by_id(db, document_id=document_id, user_id=current_user.id)
+    data = DocumentItem.model_validate(document).model_dump(mode="json")
+    if include_full_text:
+        data["full_text"] = document.full_text
     return ApiResponse[dict[str, Any]](
         code=ResponseCode.OK,
         message="success",
-        data=DocumentItem.model_validate(document).model_dump(mode="json"),
+        data=data,
     )
 
 

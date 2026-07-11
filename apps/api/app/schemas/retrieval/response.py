@@ -10,6 +10,7 @@ class RetrievalChunk(BaseModel):
     content: str
     score: float
     document_title: str
+    section_path: list[str] = []
     citation: Citation
 
 

@@ -1,26 +1,33 @@
-import { renderMarkdown } from "@/lib/markdown";
+import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
 
 interface MarkdownContentProps {
-  /** Raw markdown or plain text to render. HTML is auto-escaped before processing. */
+  /** Raw markdown or plain text to render. */
   content: string;
   className?: string;
 }
 
 /**
- * Renders markdown content as safe HTML.
+ * Renders markdown content as React components via react-markdown.
  *
- * Uses the project's built-in {@link renderMarkdown} renderer — no external
- * markdown library dependency. XSS-safe: all HTML entities are escaped before
- * markdown processing.
+ * remark-breaks — treats single \\n as <br> (GFM hard-break behaviour),
+ * matching the old DIY renderer. Essential for PDF-sourced content where
+ * the backend parser joins lines with single newlines.
  *
- * Supported syntax: headings (#–####), bold (** or __), italic (* or _).
+ * remark-gfm — tables, strikethrough, task lists, fenced code blocks, autolinks.
+ * rehype-sanitize — XSS-safe: strips raw HTML from input.
  */
 export function MarkdownContent({ content, className }: MarkdownContentProps) {
   return (
-    <div
-      className={className}
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: content is sanitized by renderMarkdown
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
-    />
+    <div className={`markdown-body ${className ?? ""}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkBreaks, remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }

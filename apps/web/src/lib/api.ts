@@ -158,6 +158,15 @@ export async function getDocumentChunks(documentId: string): Promise<DocumentDet
   return result.data;
 }
 
+export async function getDocument(
+  documentId: string,
+  includeFullText = false,
+): Promise<DocumentDetail> {
+  const params = includeFullText ? "?include_full_text=true" : "";
+  const result = await api<DocumentDetail>(`/api/v1/documents/${documentId}${params}`);
+  return result.data;
+}
+
 export async function uploadToPresignedUrl(
   uploadUrl: string,
   uploadFields: Record<string, string>,

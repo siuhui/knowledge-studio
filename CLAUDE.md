@@ -78,3 +78,4 @@ Key modules:
 - Don't put business logic in models — ORM mappings only
 - Don't write SQL in API routes — thin layer, delegate to services
 - Don't create tables for intermediate pipeline stages — only persist at Document/DocumentIndexStatus/Chunk boundaries
+- **Don't write Alembic migrations or backward-compat shims** — v0.x, no production data, `Base.metadata.create_all()` drops and recreates. Schema changes go directly in model files; old DB is discarded

@@ -44,10 +44,21 @@ def _build_citations(retrieval: RetrievalQueryResponse | None) -> list[dict[str,
 
 
 def _build_context(retrieval: RetrievalQueryResponse | None) -> str:
-    """Build RAG context string from retrieval results."""
+    """Build RAG context string from retrieval results.
+
+    Section path is injected as structural context (replaces the old
+    breadcrumb injection baked into chunk content).
+    """
     if not retrieval or not retrieval.results:
         return ""
-    return "\n\n".join(f"[Source: {r.document_title}]\n{r.content}" for r in retrieval.results)
+    parts: list[str] = []
+    for r in retrieval.results:
+        section = " > ".join(r.section_path)
+        if section:
+            parts.append(f"[Source: {r.document_title} | Section: {section}]\n{r.content}")
+        else:
+            parts.append(f"[Source: {r.document_title}]\n{r.content}")
+    return "\n\n".join(parts)
 
 
 class ChatService:

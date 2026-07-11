@@ -22,6 +22,10 @@ class ChunkItem(BaseModel):
     chunk_index: int
     content: str
     token_count: int
+    start_offset: int
+    end_offset: int
+    section_path: list[str]
+    heading_level: int = 0
 
     model_config = {"from_attributes": True}
 

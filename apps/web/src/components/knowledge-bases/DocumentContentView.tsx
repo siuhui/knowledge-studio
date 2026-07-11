@@ -1,8 +1,9 @@
 "use client";
 
 import { MarkdownContent } from "@/components/ui/MarkdownContent";
+import { getDocument } from "@/lib/api";
 import type { DocumentDetail } from "@/lib/types";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { StatusBadge } from "./StatusBadge";
 
 // ── Processing state ──
@@ -92,76 +93,76 @@ function LoadingView() {
 
 // ── Content view ──
 
-/**
- * Remove overlapping text between consecutive chunks.
- *
- * Backend chunks with OVERLAP=50 tokens (~200 chars): each chunk i (i>0)
- * prepends the tail of chunk i-1. This deduplicates so the reading view
- * shows one continuous, non-repeating document.
- *
- * showDetails mode skips dedup — it shows raw chunks for inspection.
- */
-function deduplicateChunks(chunks: { content: string }[]): string[] {
-  const result: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    if (i === 0) {
-      result.push(chunks[i].content);
-    } else {
-      const prev = result[i - 1];
-      const current = chunks[i].content;
-      // Check if current chunk starts with a suffix of previous chunk (max 200 chars)
-      let overlapLen = 0;
-      const maxOverlap = Math.min(200, prev.length);
-      for (let len = maxOverlap; len > 0; len--) {
-        if (current.startsWith(prev.slice(-len))) {
-          overlapLen = len;
-          break;
-        }
-      }
-      result.push(current.slice(overlapLen));
-    }
-  }
-  return result;
-}
-
 function ContentView({ document }: { document: DocumentDetail }) {
   const [showDetails, setShowDetails] = useState(false);
+  const [fullText, setFullText] = useState<string | null>(null);
+  const [fullTextLoading, setFullTextLoading] = useState(false);
 
-  // Dedup for reading view; detail view shows raw chunks
-  const deduped = deduplicateChunks(document.chunks);
-  // Merge raw deduped text without extra separator — the backend overlap
-  // already inserts "\n" between chunks, so each deduped[i] (i>0) starts with "\n"
-  const mergedText = deduped.join("");
+  // Lazily fetch full_text for the reading view.  Chunk data is still used
+  // for the detail/inspection view and metadata (chunk_count, etc.).
+  const loadFullText = useCallback(async () => {
+    if (fullText || fullTextLoading) return;
+    setFullTextLoading(true);
+    try {
+      const detail = await getDocument(document.id, true);
+      setFullText(detail.full_text ?? null);
+    } catch {
+      // Fall back to chunk-join only if full_text fails
+    } finally {
+      setFullTextLoading(false);
+    }
+  }, [document.id, fullText, fullTextLoading]);
+
+  useEffect(() => {
+    if (!showDetails) {
+      loadFullText();
+    }
+  }, [showDetails, loadFullText]);
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
-      {/* Reading view: continuous flowing text, no separators */}
       <div className="px-5 py-4 pb-8">
         {showDetails ? (
           /* ── Detail / inspection view: original chunks with metadata ── */
           document.chunks.map((chunk, i) => (
             <div key={chunk.id} className="mb-4">
               <div className="rounded-lg border border-gray-200/60 bg-white p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[10px] font-medium text-gray-400 bg-gray-100/80 px-1.5 py-0.5 rounded">
-                    Section {i + 1}
+                {/* ── Metadata header: single flex row, wraps naturally ── */}
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 mb-2">
+                  <span className="inline-flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[10px] font-semibold text-gray-500 bg-gray-100 shrink-0 px-1.5 py-0.5 rounded tabular-nums leading-normal">
+                      #{chunk.chunk_index}
+                    </span>
+                    {chunk.section_path.length > 0 ? (
+                      <span className="text-[11px] font-medium text-[#2F3437] break-words">
+                        {chunk.section_path.join(" · ")}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-gray-400 italic">Preamble</span>
+                    )}
                   </span>
-                  <span className="text-[10px] text-gray-300">~{chunk.token_count} tokens</span>
-                  <span className="text-[10px] text-gray-300 ml-auto">
-                    Chunk #{chunk.chunk_index}
+                  <span className="inline-flex items-center gap-1.5 text-[10px] text-gray-400 shrink-0 ml-auto">
+                    <span className="tabular-nums">
+                      offset [{chunk.start_offset}, {chunk.end_offset})
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>~{chunk.token_count} tokens</span>
                   </span>
                 </div>
-                <MarkdownContent
-                  content={chunk.content}
-                  className="text-sm text-[#2F3437] leading-relaxed break-words"
-                />
+                {/* ── Raw chunk content ── */}
+                <pre className="text-sm text-[#2F3437] leading-relaxed whitespace-pre-wrap break-words font-sans m-0">{chunk.content}</pre>
               </div>
             </div>
           ))
+        ) : fullTextLoading ? (
+          /* ── Loading full_text ── */
+          <div className="flex justify-center py-10">
+            <div className="w-5 h-5 border-2 border-gray-200 border-t-[#1A1A1A] rounded-full animate-spin" />
+          </div>
         ) : (
-          /* ── Reading view: single continuous, deduplicated text ── */
+          /* ── Reading view: canonical full_text, no chunk join ── */
           <MarkdownContent
-            content={mergedText}
+            content={fullText ?? ""}
             className="text-sm text-[#2F3437] leading-relaxed break-words"
           />
         )}
