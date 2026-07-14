@@ -12,18 +12,18 @@ Public API:
   AgentUsage   — token consumption summary
 
 Pre-built configs (from configs.py):
-  SEARCH_AGENT_CONFIG   — search agent (max 5 rounds)
+  SEARCH_AGENT_CONFIG   — search agent (max 4 rounds)
   GATHER_AGENT_CONFIG   — gather agent (max 8 rounds)
 
 Built-in tools (from tools.py):
-  search_keywords  — PostgreSQL FTS on Document.full_text
-  read_document    — read Document.full_text by offset
-  list_documents   — list all documents in KB
+  hybrid_search   — FTS + vector + RRF on Chunk
+  read_document   — read Document.full_text by offset
+  list_documents  — list all documents in KB
 """
 
 from app.services.agent.configs import GATHER_AGENT_CONFIG, SEARCH_AGENT_CONFIG
 from app.services.agent.runner import AgentRunner
-from app.services.agent.tools import list_documents, read_document, search_keywords
+from app.services.agent.tools import hybrid_search, list_documents, read_document
 from app.services.agent.types import (
     AgentConfig,
     AgentResult,
@@ -49,7 +49,7 @@ __all__ = [
     "GATHER_AGENT_CONFIG",
     "SEARCH_AGENT_CONFIG",
     # Tools
+    "hybrid_search",
     "list_documents",
     "read_document",
-    "search_keywords",
 ]

@@ -275,7 +275,7 @@ function MessageBubble({
       {/* Citations — minimal inline footnotes */}
       {message.citations && message.citations.length > 0 && (
         <div className="mt-3 pt-2 border-t border-gray-100">
-          <p className="text-[11px] text-gray-400 mb-1.5">Sources</p>
+          <p className="text-[11px] text-gray-400 mb-1.5">References</p>
           <div className="space-y-1">
             {message.citations.map((c, i) => (
               <div key={`${c.document_id}-${c.chunk_index}`} className="text-[11px] text-gray-500">

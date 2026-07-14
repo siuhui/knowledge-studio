@@ -6,7 +6,7 @@ headings as ``#`` / ``##``, fenced code blocks as `` ``` ``, etc.
 
 import re
 from collections import Counter
-from typing import Protocol
+from typing import Any, Protocol, TypedDict, cast
 
 import charset_normalizer
 import fitz  # PyMuPDF
@@ -17,10 +17,17 @@ class Parser(Protocol):
     def parse(self, raw_bytes: bytes) -> str: ...
 
 
+class _SpanDict(TypedDict):
+    text: str
+    size: float
+    font: str
+    flags: int
+
+
 class PdfParser:
     _HEADING_FONT_SIZE_RATIO = 1.15  # body × this → heading candidate
-    _HEADING_MAX_LENGTH = 140        # characters — headings are short
-    _MIN_BODY_SIZE = 8               # ignore tiny fonts (footnotes, watermarks)
+    _HEADING_MAX_LENGTH = 140  # characters — headings are short
+    _MIN_BODY_SIZE = 8  # ignore tiny fonts (footnotes, watermarks)
 
     def parse(self, raw_bytes: bytes) -> str:
         """Extract text from PDF, emitting ``#``-prefixed headings.
@@ -37,7 +44,7 @@ class PdfParser:
         """
         doc = fitz.open(stream=raw_bytes, filetype="pdf")
         try:
-            all_spans: list[dict] = []
+            all_spans: list[_SpanDict] = []
             all_sizes: list[float] = []
 
             for page in doc:
@@ -61,26 +68,28 @@ class PdfParser:
             doc.close()
 
     @staticmethod
-    def _collect_spans(blocks: list[dict]) -> list[dict]:
+    def _collect_spans(blocks: list[dict[str, object]]) -> list[_SpanDict]:
         """Flatten blocks → lines → spans, keeping layout metadata."""
-        spans: list[dict] = []
+        spans: list[_SpanDict] = []
         for block in blocks:
             if block.get("type") != 0:
                 continue  # skip images, etc.
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
+            for line in cast(list[dict[str, Any]], block.get("lines", [])):
+                for span in cast(list[dict[str, Any]], line.get("spans", [])):
                     text = span.get("text", "").strip()
                     if not text:
                         continue
-                    spans.append({
-                        "text": text,
-                        "size": round(span.get("size", 10), 1),
-                        "font": span.get("font", ""),
-                        "flags": span.get("flags", 0),
-                    })
+                    spans.append(
+                        {
+                            "text": text,
+                            "size": round(span.get("size", 10), 1),
+                            "font": span.get("font", ""),
+                            "flags": span.get("flags", 0),
+                        }
+                    )
         return spans
 
-    def _spans_to_markdown(self, spans: list[dict], heading_threshold: float, body_size: float) -> str:
+    def _spans_to_markdown(self, spans: list[_SpanDict], heading_threshold: float, body_size: float) -> str:
         """Render spans as Markdown lines, upgrading headings."""
         lines: list[str] = []
         for s in spans:
@@ -88,10 +97,9 @@ class PdfParser:
             size = s["size"]
             bold = bool(s["flags"] & 2)  # PDF flag bit 2 = bold
 
-            is_heading = (
-                size >= heading_threshold
-                or (bold and size > body_size)
-            ) and len(text) < self._HEADING_MAX_LENGTH
+            is_heading = (size >= heading_threshold or (bold and size > body_size)) and len(
+                text
+            ) < self._HEADING_MAX_LENGTH
 
             if is_heading:
                 # Estimate level: bigger font → shallower level

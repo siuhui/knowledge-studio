@@ -61,7 +61,7 @@ upload → MinIO presigned POST → /complete → background index pipeline:
 ### 1.4 检索与问答
 
 ```
-Chat: agentic_search (LLM + PostgreSQL FTS, 默认) 或 hybrid_search (vector + keyword + RRF) → build_context → LLM answer (同步 / SSE streaming)
+Chat: route_and_rewrite → direct (hybrid + CRAG, 单次检索) / agentic (AgentRunner multi-round, 多轮检索) → build_context → LLM answer (同步 / SSE streaming)
 ```
 
 ### 1.5 当前约束（v0.1.0 Phase 2 完成后）
@@ -69,10 +69,10 @@ Chat: agentic_search (LLM + PostgreSQL FTS, 默认) 或 hybrid_search (vector + 
 | 项目 | 状态 |
 |------|------|
 | 信息来源 | 文件上传（PDF/MD/TXT）+ URL 导入 |
-| 检索策略 | agentic 为默认（零 embedding）；hybrid 可选。`ChatRequest.search_strategy` 已接入 |
-| Chunk + Embed | 入库必做（待改为按需触发，当前 hybrid 依赖 chunk，agentic 不依赖） |
+| 检索策略 | direct 为默认（单次 hybrid + CRAG）；agentic 可选（多轮 agent）。前端 `search_mode` 字段已接入 |
+| Chunk + Embed | 入库必做。两种检索模式都依赖 Chunk 表（agentic 和 direct 共用 `hybrid_retrieve`） |
 | 产出物 | 问答 + 研究报告 + PPT |
-| 用户选择 | 前端待加策略切换 UI（`search_strategy` 字段已就绪，API 层支持） |
+| 用户选择 | 前端支持 `search_mode` 切换（`direct` / `agentic`） |
 
 ---
 
@@ -82,7 +82,7 @@ Chat: agentic_search (LLM + PostgreSQL FTS, 默认) 或 hybrid_search (vector + 
 
 打通从"文档入库"到"智能回答"到"报告产出"的完整流程。核心新增两个能力：
 
-1. **Agentic search**：用 LLM + keyword FTS 做多轮推理检索，替代 hybrid 成为默认策略，零 embedding 成本
+1. **Agentic search**：用 AgentRunner 做多轮推理检索（hybrid_search + read_document + list_documents），适合需要多步推理的复杂问题
 2. **Studio 报告生成**：对知识库文档进行深度分析，产出结构化多章节报告文件
 
 ### 2.2 范围边界
@@ -104,12 +104,12 @@ v0.1.0 完成态
 
 | 决策 | 理由 |
 |------|------|
-| **保留现有 chunk+embed pipeline 不变** | agentic 不依赖 chunk/embed，两条线独立演进；本版本加按需触发入口，拆 pipeline 留给 v0.2.0 |
-| **agentic 做默认策略** | 零 embedding 调用 |
+| **保留现有 chunk+embed pipeline 不变** | agentic 和 direct 共用同一套 Chunk 级检索基础设施（`hybrid_retrieve` + RRF） |
+| **agentic 做可选检索策略** | 多轮 agent 循环自动搜索，适合需要多步推理的复杂问题 |
 | **hybrid 保留为可选** | 对已有 embed 的文档提供高精度语义搜索 |
 | **Studio 先做报告，再做 PPT** | 报告是最高频需求，markdown 输出验证整个 workflow，PPT 紧跟其后 |
 | **Agent 运行时独立于检索和 Studio** | 同一个 AgentRunner 被两者复用，`AgentRunner` 本身是业务无关的 |
-| **chunk+embed 可按需触发** | 入库只做 parse，用户选择用 hybrid 时才跑 chunk+embed（Phase 3 待实现，当前入库仍跑全 pipeline） |
+| **chunk+embed 入库必做** | 两种模式都依赖 Chunk 表，管道始终跑全流程（parse → chunk → embed） |
 
 ### 2.4 不入 v0.1.0 的东西
 
@@ -152,7 +152,7 @@ services/agent/              # NEW — Agent 运行时
   __init__.py                # 公开: AgentRunner, AgentConfig, Tool, AgentResult
   runner.py                  # AgentRunner: ~120 行 ReAct 循环
   types.py                   # AgentConfig, AgentStep, AgentResult, ToolResult, Tool
-  tools.py                   # 内置工具: search_keywords, read_document, list_documents
+  tools.py                   # 内置工具: hybrid_search, read_document, list_documents
   configs.py                 # 预置配置: SEARCH_AGENT_CONFIG, GATHER_AGENT_CONFIG
 ```
 
@@ -328,8 +328,8 @@ class AgentRunner:
 
         事件类型:
           {"type": "thought",      "text": "...", "round": 1}
-          {"type": "tool_call",    "tool": "search_keywords", "args": {...}, "round": 1}
-          {"type": "tool_result",  "tool": "search_keywords", "count": 5, "round": 1}
+          {"type": "tool_call",    "tool": "hybrid_search", "args": {...}, "round": 1}
+          {"type": "tool_result",  "tool": "hybrid_search", "count": 5, "round": 1}
           {"type": "final",        "answer": "..."}
           {"type": "error",        "message": "..."}
         """
@@ -348,49 +348,55 @@ class AgentRunner:
 
 ### 3.5 内置工具
 
-三个工具全部对 `Document.full_text` 操作，跑在 PostgreSQL 上，不经过 Chunk，不依赖 embedding。
+三个工具都对 Chunk 表操作，走统一的 `hybrid_retrieve()` + `merge_results()` 管道（FTS + vector + RRF）。Agent 通过 `read_document` 深入阅读 `Document.full_text` 获取完整上下文。
 
 ```python
 # services/agent/tools.py
 
-search_keywords = Tool(
-    name="search_keywords",
+hybrid_search = Tool(
+    name="hybrid_search",
     description=(
-        "在知识库文档全文（full_text）中搜索关键词或短语。"
-        "返回匹配的文档片段（ts_headline），适合查找特定概念、术语、事实。"
+        "Hybrid search (full-text + semantic vector) across all documents in one call. "
+        "embedding_query 用于语义相似度搜索，lexical_queries 用于全文关键词匹配。"
+        "返回 chunk 级结果，含 start_offset/end_offset 供 read_document 使用。"
     ),
     parameters={
         "type": "object",
         "properties": {
-            "query": {
+            "embedding_query": {
                 "type": "string",
-                "description": "搜索词或短语。普通文本即可，无需特殊语法",
+                "description": "本轮搜索的自然语言意图描述",
+            },
+            "lexical_queries": {
+                "type": "array", "items": {"type": "string"},
+                "description": "1-3 个关键词短语用于全文匹配",
             },
             "document_ids": {
                 "type": "array", "items": {"type": "string"},
-                "description": "限定文档 ID 列表。不传则搜索整个知识库。",
+                "description": "限定文档 ID 列表",
             },
             "top_k": {
                 "type": "integer", "default": 5,
                 "description": "返回结果数量",
             },
         },
-        "required": ["query"],
+        "required": ["embedding_query"],
     },
-    execute=_search_keywords_impl,
+    execute=_hybrid_search_impl,
 )
 
 read_document = Tool(
     name="read_document",
     description=(
-        "读取文档的指定部分。先用 search_keywords 找到相关位置，"
+        "按字符偏移量读取文档全文的指定部分。"
+        "先用 hybrid_search 或 list_documents 获取文档 UUID，"
         "再用此工具深入阅读完整上下文。"
     ),
     parameters={
         "type": "object",
         "properties": {
             "document_id": {"type": "string"},
-            "offset": {"type": "integer", "description": "从第几个字符开始（0-based）"},
+            "offset": {"type": "integer", "description": "起始字符位置（0-based）"},
             "length": {"type": "integer", "default": 3000, "description": "读取字符数"},
         },
         "required": ["document_id"],
@@ -400,34 +406,27 @@ read_document = Tool(
 
 list_documents = Tool(
     name="list_documents",
-    description="列出知识库中所有文档，返回标题和大小。用于了解有哪些文档可用。",
+    description="列出知识库中所有文档，返回 UUID、标题、格式和大小。每次搜索前先调用此工具了解可用文档。",
     parameters={"type": "object", "properties": {}},
     execute=_list_documents_impl,
 )
 ```
 
-**Tool 实现示例**（`_search_keywords_impl` 签名示意）：
+**Tool 实现示例**（`_hybrid_search_impl` 核心流程）：
 
 ```python
-def _search_keywords_impl(ctx: ToolContext, query: str, document_ids=None, top_k=5) -> ToolResult:
-    rows = _execute_fts(ctx.db, ctx.kb_id, query, document_ids, top_k)
-    artifacts = [
-        Artifact(
-            data={"doc_id": r["id"], "title": r["title"], "snippet": r["snippet"], "rank": r["rank"]},
-            source=r["id"],
-        )
-        for r in rows
-    ]
-    summary = _build_summary(rows, max_chars=500)
-    return ToolResult(
-        summary=summary,
-        artifacts=artifacts,
-        artifact_count=len(artifacts),
-        metadata={"latency_ms": 45, "documents_scanned": len(rows)},
-    )
+def _hybrid_search_impl(ctx, embedding_query, lexical_queries=None, document_ids=None, top_k=5) -> ToolResult:
+    raw = hybrid_retrieve(ctx.db, semantic_query=embedding_query, lexical_queries=lexical_queries or [embedding_query],
+                          knowledge_base_id=ctx.kb_id, embedder=embedder, top_k=top_k, document_ids=document_ids)
+    merged = merge_results(raw, top_k=top_k)
+    # 构建 Chunk 级 artifacts，含 start_offset/end_offset 供 read_document 定位
+    ...
+    return ToolResult(summary=summary, artifacts=artifacts, artifact_count=len(artifacts), metadata={...})
 ```
 
-**Tool 返回设计原则**：`summary` 字段只给 LLM 看 200-500 字摘要 + 元数据，避免大段文本撑爆 context。`artifacts` 存结构化完整数据（每个 `Artifact` 在构造时校验 JSON 可序列化），由调用方（AgenticSearchStrategy / ReportWorkflow）收集用于最终输出。
+`hybrid_search` 调用 `services/retrieval/retriever.py` 的统一 `hybrid_retrieve()` + `merge_results()` 管道——两条检索路径（FTS + vector）独立执行，任一失败另一条继续，RRF 自然处理空列表。
+
+**Tool 返回设计原则**：`summary` 字段只给 LLM 看 200-500 字摘要 + 元数据，避免大段文本撑爆 context。`artifacts` 存结构化完整数据（每个 `Artifact` 在构造时校验 JSON 可序列化），由调用方收集用于最终输出。
 
 ### 3.6 两种预置配置
 
@@ -435,19 +434,19 @@ def _search_keywords_impl(ctx: ToolContext, query: str, document_ids=None, top_k
 # services/agent/configs.py
 
 SEARCH_AGENT_CONFIG = AgentConfig(
-    tools=[search_keywords, read_document, list_documents],
+    tools=[hybrid_search, read_document, list_documents],
     system_prompt="""\
 You are a research assistant searching a knowledge base to answer questions.
 
 IMPORTANT — Document IDs are UUIDs:
   Every document has a UUID like '550e8400-e29b-41d4-a716-446655440000'.
-  You can only obtain valid UUIDs from list_documents() or search_keywords() results.
+  You can only obtain valid UUIDs from list_documents() or hybrid_search() results.
   Never pass a document title, filename, or any string that is not a UUID
-  to read_document() or search_keywords()'s document_ids parameter.
+  to read_document() or hybrid_search()'s document_ids parameter.
 
 Workflow:
 1. Call list_documents() first to discover available documents and their UUIDs
-2. Use search_keywords() to find relevant passages — note the UUIDs in results
+2. Use hybrid_search() to find relevant passages — note the UUIDs in results
 3. Use read_document() with the exact UUID from step 1 or 2 to get full context
 4. Cross-validate with additional searches from different angles
 5. When you have enough information, give a final answer with citations
@@ -459,7 +458,7 @@ Do NOT stop after the first search — always verify with at least one cross-che
 )
 
 GATHER_AGENT_CONFIG = AgentConfig(
-    tools=[search_keywords, read_document, list_documents],
+    tools=[hybrid_search, read_document, list_documents],
     system_prompt="""\
 You are a research assistant collecting materials for a report chapter.
 
@@ -616,7 +615,7 @@ class RetrievalService:
 
 @register("agentic")
 class AgenticSearchStrategy:
-    """Agent 多轮推理检索 — 零 embedding 成本。"""
+    """Agent 多轮推理检索 — 通过 AgentRunner 调用 hybrid_search 工具。"""
 
     def __init__(self):
         self._agent = AgentRunner(llm_provider, SEARCH_AGENT_CONFIG)
@@ -631,7 +630,7 @@ class AgenticSearchStrategy:
         return _artifacts_to_response(db, query=query, artifacts=result.collected_artifacts)
 ```
 
-不调用 embedding API。不依赖 Chunk 表。只依赖 PostgreSQL FTS + Document.full_text。
+Agent 通过 `hybrid_search` 工具检索，该工具调用统一的 `hybrid_retrieve()`（FTS + vector + RRF on Chunk），与 direct 模式共享同一检索管道。
 
 #### HybridSearchStrategy（保留）
 
@@ -651,37 +650,44 @@ class HybridSearchStrategy:
 ### 4.4 接入 ChatService
 
 ```python
-# schemas/chat.py — ChatRequest 加一个字段
+# schemas/chat.py — ChatRequest 字段
 
 class ChatRequest(BaseModel):
     knowledge_base_id: str
     session_id: str | None = None
     content: str = Field(min_length=1, max_length=2000)
     reference_document_ids: list[str] | None = None
-    search_strategy: str = "agentic"          # NEW
+    search_mode: str | None = None             # "direct" | "agentic" | None（None 时由 LLM 自动路由）
 ```
 
 ```python
-# services/chat.py — 只加一个参数
+# services/chat.py — 流程
 
 class ChatService:
     @staticmethod
     def send_message(db, *, kb_id, user_id, session_id,
-                     content, reference_document_ids=None, search_strategy="agentic"):
+                     content, reference_document_ids=None, search_mode=None):
         # ... session resolve (不变) ...
 
-        retrieval = RetrievalService.search(
-            db,
-            query=content, knowledge_base_id=kb_id, top_k=10,
-            document_ids=doc_ids,
-            strategy=search_strategy,          # ← 唯一新增参数
-        )
+        # 0. Route & Rewrite — 1 LLM call: complexity check + decontextualize
+        route_result = route_and_rewrite(llm_provider, content, history=history)
+        effective_mode = search_mode if search_mode is not None else route_result.mode.value
 
+        # 1. Retrieve — mode dispatch with CRAG in direct path
+        if effective_mode == "agentic":
+            retrieval = RetrievalService.search(db, query=..., mode="agentic", ...)
+        else:
+            retrieval = RetrievalService.search(db, query=..., mode="direct", lexical_queries=..., ...)
+            # CRAG gate — evaluate relevance; correct once if needed
+            crag_result = crag_evaluate_and_act(db, query=..., retrieval=retrieval, ...)
+            ...
+
+        # 2. Build context + messages → LLM generate
         context = _build_context(retrieval)     # ← 不感知策略
-        # ... LLM generate (不变) ...
+        ...
 ```
 
-**ChatService 和 `_build_context()` 完全不感知策略差异**——它们只消费 `RetrievalQueryResponse`。
+**ChatService 和 `_build_context()` 完全不感知策略差异**——它们只消费 `RetrievalQueryResponse`。路由由 `route_and_rewrite()` 自动完成（LLM 判断复杂度），用户可显式传 `search_mode` 覆盖。
 
 ---
 
@@ -889,7 +895,7 @@ ChatService                          StudioTaskRunner
 | Agentic chunking | v0.2.0 | 用 LLM 按语义单元切分 |
 | Adaptive sizing | v0.2.0 | 根据文档类型和标题层级调整 chunk 大小 |
 
-> agentic search 跑在 Document.full_text 上，不依赖 chunk。但 hybrid 依赖 chunk → chunk 质量影响 hybrid 精度。优化仍有价值。
+> agentic 和 direct 共用同一套 Chunk 级检索管道。chunk 质量影响所有检索路径 → chunk 优化仍有价值。
 
 ### 7.2 Agent 优化
 
@@ -897,7 +903,7 @@ ChatService                          StudioTaskRunner
 |------|--------|------|
 | **早停机制** | ✅ | 连续 N 轮无新信息 → 提前终止，`early_stop_patience` |
 | **Tool 返回摘要** | ✅ | `ToolResult.summary` 200-500 字，不喂全文给 LLM |
-| **搜索 query 重写** | v0.2.0 | Agent 在 search_keywords 前自扩展关键词 |
+| **搜索 query 重写** | v0.2.0 | Agent 在 hybrid_search 前自扩展关键词 |
 | 并行 tool calls | v0.2.0 | LLM 原生支持 parallel function calling 时启用 |
 | System prompt 优化 | v0.2.0 | 基于实际使用数据添加 few-shot 示例 |
 | Memory | v0.2.0 | Agent 记住读过哪些区域，避免重复读取 |

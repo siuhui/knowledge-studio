@@ -122,15 +122,14 @@ class TestChunkText:
         full_text = "## Install\n\npip install knowledge-base\n\nmore text"
         chunks = _chunk_text(full_text, chunk_size=30, overlap=10)
         for c in chunks:
-            actual = full_text[c.start_offset:c.end_offset]
+            actual = full_text[c.start_offset : c.end_offset]
             # Section separators (\n\n) between sections are not part of
             # any chunk — they're excluded from both.  Offsets can have gaps.
             # At minimum, the offset slice and chunk text must share content.
             actual_words = set(actual.strip().split())
             chunk_words = set(c.text.strip().split())
             assert actual_words & chunk_words, (
-                f"Offset mismatch: [{c.start_offset}:{c.end_offset}] → {actual[:50]!r} "
-                f"vs chunk {c.text[:50]!r}"
+                f"Offset mismatch: [{c.start_offset}:{c.end_offset}] → {actual[:50]!r} vs chunk {c.text[:50]!r}"
             )
 
     def test_heading_never_orphaned(self):

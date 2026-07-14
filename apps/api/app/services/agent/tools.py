@@ -1,7 +1,7 @@
 """Built-in agent tools for knowledge base search.
 
-All three tools operate on Document.full_text via PostgreSQL — no Chunk,
-no embedding dependency. Designed for agentic (keyword-driven) search.
+Tools use the unified ``hybrid_retrieve`` + ``merge_results`` pipeline
+from ``services/retrieval/retriever.py`` which searches Chunk via FTS + vector.
 """
 
 import time
@@ -10,125 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from sqlalchemy import func, text
-from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.services.agent.types import Artifact, ToolContext, ToolResult
 
 logger = structlog.get_logger(__name__)
-
-# ── Summary builder ──────────────────────────────────────────────────────────
-
-
-def _build_summary(rows: list[dict[str, Any]], max_chars: int = 500) -> str:
-    """Build a compact summary from search result rows for the LLM."""
-    if not rows:
-        return "No results found."
-    lines: list[str] = []
-    total = 0
-    for r in rows:
-        line = f"[{r['rank']}] UUID={r['id']} | {r['title']}: {r['snippet'][:120]}"
-        if total + len(line) > max_chars:
-            lines.append(f"... ({len(rows) - len(lines)} more results)")
-            break
-        lines.append(line)
-        total += len(line)
-    return "\n".join(lines)
-
-
-# ── FTS helper ───────────────────────────────────────────────────────────────
-
-
-# pgvector FTS config used for all text-search operations.
-# 'simple' is chosen over 'english' because it does not strip stopwords
-# or apply English-specific stemming — it only lowercases and splits on
-# whitespace/punctuation, making it usable for mixed-language corpora
-# (e.g. Chinese, Japanese, Korean alongside English).
-_FTS_CONFIG = "simple"
-
-
-def _execute_fts(
-    db: Session,
-    kb_id: str,
-    query: str,
-    document_ids: list[str] | None = None,
-    top_k: int = 5,
-) -> list[dict[str, Any]]:
-    """Execute PostgreSQL FTS on Document.full_text with ts_headline snippets.
-
-    Uses plainto_tsquery for user-friendly search — no tsquery syntax required.
-    """
-    ts_vector = func.to_tsvector(_FTS_CONFIG, Document.full_text)
-    ts_query = func.plainto_tsquery(_FTS_CONFIG, query)
-
-    q = (
-        db.query(
-            Document.id.label("id"),
-            Document.title.label("title"),
-            func.ts_headline(_FTS_CONFIG, Document.full_text, ts_query, "MaxWords=40, MinWords=15, ShortWord=3").label(
-                "snippet"
-            ),
-            func.ts_rank(ts_vector, ts_query).label("rank"),
-        )
-        .filter(Document.knowledge_base_id == kb_id)
-        .filter(Document.status == "ready")
-        .filter(ts_vector.match(query, postgresql_regconfig=_FTS_CONFIG))
-    )
-
-    if document_ids:
-        q = q.filter(Document.id.in_(document_ids))
-
-    rows = q.order_by(text("rank DESC")).limit(top_k).all()
-
-    return [{"id": r.id, "title": r.title, "snippet": r.snippet, "rank": round(float(r.rank), 4)} for r in rows]
-
-
-# ── Tool implementations ─────────────────────────────────────────────────────
-
-
-def _search_keywords_impl(
-    ctx: ToolContext,
-    query: str,
-    document_ids: list[str] | None = None,
-    top_k: int = 5,
-) -> ToolResult:
-    """Search Document.full_text for keywords using PostgreSQL FTS."""
-    t0 = time.perf_counter()
-    rows = _execute_fts(ctx.db, ctx.kb_id, query, document_ids=document_ids, top_k=top_k)
-
-    artifacts = [
-        Artifact(
-            data={
-                "doc_id": r["id"],
-                "title": r["title"],
-                "snippet": r["snippet"],
-                "rank": r["rank"],
-            },
-            source=r["id"],
-        )
-        for r in rows
-    ]
-
-    summary = _build_summary(rows)
-    doc_ids = list({r["id"] for r in rows})
-
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-
-    logger.info(
-        "search_keywords executed",
-        query=query[:100],
-        kb_id=ctx.kb_id,
-        result_count=len(rows),
-        latency_ms=round(elapsed_ms, 2),
-    )
-
-    return ToolResult(
-        summary=summary,
-        artifacts=artifacts,
-        artifact_count=len(artifacts),
-        metadata={"latency_ms": round(elapsed_ms, 2), "documents_scanned": len(rows), "document_ids": doc_ids},
-    )
 
 
 def _read_document_impl(
@@ -182,7 +68,7 @@ def _read_document_impl(
             "total_chars": total_chars,
             "content": snippet,
         },
-        source=document_id,
+        doc_id=document_id,
     )
 
     logger.info(
@@ -231,7 +117,7 @@ def _list_documents_impl(ctx: ToolContext) -> ToolResult:
                 "format": d.source_format,
                 "size_chars": len(d.full_text),
             },
-            source=d.id,
+            doc_id=d.id,
         )
         for d in docs
     ]
@@ -241,7 +127,7 @@ def _list_documents_impl(ctx: ToolContext) -> ToolResult:
         for i, d in enumerate(docs)
     ]
     summary = (
-        f"Found {len(docs)} document(s). Use the UUID (not title) with read_document or search_keywords:\n"
+        f"Found {len(docs)} document(s). Use the UUID (not title) with read_document or hybrid_search:\n"
         + "\n".join(lines[:20])
     )
     if len(docs) > 20:
@@ -259,6 +145,115 @@ def _list_documents_impl(ctx: ToolContext) -> ToolResult:
         artifacts=artifacts,
         artifact_count=len(artifacts),
         metadata={"document_count": len(docs), "latency_ms": round((time.perf_counter() - t0) * 1000, 2)},
+    )
+
+
+# ── Hybrid search tool (Phase 2) ─────────────────────────────────────────────
+
+
+def _hybrid_search_impl(
+    ctx: ToolContext,
+    embedding_query: str,
+    lexical_queries: list[str] | None = None,
+    document_ids: list[str] | None = None,
+    top_k: int = 5,
+) -> ToolResult:
+    """Agent tool: hybrid search (FTS + vector + RRF) on Chunk table.
+
+    Uses the unified ``hybrid_retrieve()`` + ``merge_results()`` pipeline.
+    Both paths are fault-tolerant — if one fails the other continues.
+    Returns Chunk-level artifacts with ``start_offset`` / ``end_offset``
+    so the agent can use them directly with ``read_document``.
+    """
+    from app.services.embedding import embedder
+    from app.services.retrieval.retriever import hybrid_retrieve, merge_results
+
+    t0 = time.perf_counter()
+    queries = lexical_queries or [embedding_query]
+
+    raw = hybrid_retrieve(
+        ctx.db,
+        semantic_query=embedding_query,
+        lexical_queries=queries,
+        knowledge_base_id=ctx.kb_id,
+        embedder=embedder,
+        top_k=top_k,
+        document_ids=document_ids,
+    )
+    merged = merge_results(raw, top_k=top_k)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    if merged.both_failed:
+        return ToolResult(
+            summary=(
+                "Search is currently unavailable. "
+                f"FTS error: {merged.fts_error}. Vector error: {merged.vector_error}. "
+                "Tell the user to try again later."
+            ),
+            artifacts=[],
+            artifact_count=0,
+            metadata={
+                "latency_ms": round(elapsed_ms, 2),
+                "fts_error": merged.fts_error,
+                "vector_error": merged.vector_error,
+            },
+        )
+
+    if not merged.chunks:
+        return ToolResult(
+            summary="No results found. Try different lexical_queries or broader terms.",
+            artifacts=[],
+            artifact_count=0,
+            metadata={"latency_ms": round(elapsed_ms, 2)},
+        )
+
+    # Build Chunk-level artifacts with offset info for read_document
+    artifacts = []
+    for i, (chunk, score) in enumerate(merged.chunks):
+        start_offset = getattr(chunk, "start_offset", 0)
+        end_offset = getattr(chunk, "end_offset", len(chunk.content))
+        artifacts.append(
+            Artifact(
+                data={
+                    "chunk_id": chunk.id,
+                    "doc_id": chunk.doc_id,
+                    "content": chunk.content,
+                    "score": round(score, 4),
+                    "rank": i + 1,
+                    "start_offset": start_offset,
+                    "end_offset": end_offset,
+                },
+                doc_id=chunk.doc_id,
+            )
+        )
+
+    # Build compact summary for LLM
+    lines = []
+    for i, (chunk, score) in enumerate(merged.chunks[:5]):
+        lines.append(f"[{i + 1}] doc={chunk.doc_id} score={score:.4f}: {chunk.content[:120]}")
+    summary = "\n".join(lines) if lines else "No results found."
+    if len(merged.chunks) > 5:
+        summary += f"\n... and {len(merged.chunks) - 5} more results."
+
+    logger.info(
+        "hybrid_search executed",
+        embedding_query=embedding_query[:100],
+        lexical_queries=queries,
+        kb_id=ctx.kb_id,
+        result_count=len(artifacts),
+        latency_ms=round(elapsed_ms, 2),
+    )
+
+    return ToolResult(
+        summary=summary,
+        artifacts=artifacts,
+        artifact_count=len(artifacts),
+        metadata={
+            "latency_ms": round(elapsed_ms, 2),
+            "result_count": len(artifacts),
+            "fts_error": merged.fts_error is not None,
+            "vector_error": merged.vector_error is not None,
+        },
     )
 
 
@@ -280,29 +275,43 @@ class _ToolDef:
     execute: Callable[..., ToolResult]
 
 
-search_keywords = _ToolDef(
-    name="search_keywords",
+hybrid_search = _ToolDef(
+    name="hybrid_search",
     description=(
-        "Search for keywords or phrases in the full text of documents in the knowledge base. "
-        "Returns matching document snippets with ranking scores and their UUID document IDs. "
-        "Use this to find specific concepts, terms, or facts across all documents."
+        "Hybrid search (full-text + semantic vector) across all documents in one call. "
+        "Takes two kinds of input: embedding_query for semantic (vector) similarity, "
+        "lexical_queries for exact word matching via full-text search. "
+        "If lexical_queries is omitted, the embedding_query is used for FTS as well. "
+        "Returns chunk-level results with start_offset/end_offset for use with read_document."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "query": {
+            "embedding_query": {
                 "type": "string",
-                "description": "Search keywords or phrase. Simple text works — no special syntax needed.",
+                "description": (
+                    "A natural language description of what you're looking for in THIS search round. "
+                    "For the first search, use the original user question. "
+                    "In follow-up rounds when you've narrowed your focus, refine this to match "
+                    "your current search intent."
+                ),
+            },
+            "lexical_queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "1-3 focused short query phrases for exact word matching. "
+                    "Not isolated keywords — use concise phrases matching the query language. "
+                    "EN: 'SQL injection prevention'  ZH: 'SQL注入防护'. "
+                    "For Chinese, use meaningful 2-4 character sequences, not single chars. "
+                    "Each phrase runs as an independent FTS query; results are merged via RRF. "
+                    "Omit to use embedding_query for FTS as well."
+                ),
             },
             "document_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": (
-                    "Optional list of document UUIDs to limit the search scope. "
-                    "Must be exact UUIDs (e.g. '550e8400-e29b-41d4-a716-446655440000') "
-                    "obtained from list_documents or a previous search_keywords call. "
-                    "Do NOT pass document titles here."
-                ),
+                "description": "Optional list of document UUIDs to limit the search scope.",
             },
             "top_k": {
                 "type": "integer",
@@ -310,18 +319,20 @@ search_keywords = _ToolDef(
                 "description": "Number of results to return (default 5).",
             },
         },
-        "required": ["query"],
+        "required": ["embedding_query"],
     },
-    execute=_search_keywords_impl,
+    execute=_hybrid_search_impl,
 )
 
 read_document = _ToolDef(
     name="read_document",
     description=(
         "Read a specific portion of a document's full text by character offset. "
-        "Use search_keywords or list_documents first to obtain the correct document UUID, "
+        "Use hybrid_search or list_documents first to obtain the correct document UUID, "
         "then use this tool to read the full surrounding context. "
-        "IMPORTANT: document_id must be a UUID, never a document title."
+        "IMPORTANT: document_id must be a UUID, never a document title. "
+        "TIP: when reading context around a chunk found via hybrid_search, "
+        "use the chunk's start_offset directly as the offset parameter."
     ),
     parameters={
         "type": "object",
@@ -330,13 +341,16 @@ read_document = _ToolDef(
                 "type": "string",
                 "description": (
                     "UUID of the document to read (e.g. '550e8400-e29b-41d4-a716-446655440000'). "
-                    "Must be an exact UUID obtained from list_documents or search_keywords results. "
+                    "Must be an exact UUID obtained from list_documents or hybrid_search results. "
                     "Do NOT pass a document title, filename, or any other string — only a UUID."
                 ),
             },
             "offset": {
                 "type": "integer",
-                "description": "Starting character position (0-based). Default 0 for beginning of document.",
+                "description": (
+                    "Starting character position (0-based). Default 0 for beginning of document. "
+                    "When reading around a chunk from hybrid_search, use the chunk's start_offset value directly."
+                ),
             },
             "length": {
                 "type": "integer",
@@ -354,7 +368,7 @@ list_documents = _ToolDef(
     description=(
         "List all documents in the knowledge base with their UUID IDs, titles, formats, and sizes. "
         "Always call this first to discover available documents and their UUIDs. "
-        "The returned UUIDs are needed for search_keywords (to scope) and read_document (to read)."
+        "The returned UUIDs are needed for hybrid_search (to scope) and read_document (to read)."
     ),
     parameters={"type": "object", "properties": {}},
     execute=_list_documents_impl,

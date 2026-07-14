@@ -22,10 +22,7 @@ interface MarkdownContentProps {
 export function MarkdownContent({ content, className }: MarkdownContentProps) {
   return (
     <div className={`markdown-body ${className ?? ""}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkBreaks, remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-      >
+      <ReactMarkdown remarkPlugins={[remarkBreaks, remarkGfm]} rehypePlugins={[rehypeSanitize]}>
         {content}
       </ReactMarkdown>
     </div>

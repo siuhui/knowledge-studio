@@ -98,12 +98,20 @@ input[type="password"]::-ms-clear {
   margin-bottom: 0.5em;
 }
 
-.markdown-body h1 { font-size: 1.5em; }
-.markdown-body h2 { font-size: 1.25em; }
-.markdown-body h3 { font-size: 1.125em; }
+.markdown-body h1 {
+  font-size: 1.5em;
+}
+.markdown-body h2 {
+  font-size: 1.25em;
+}
+.markdown-body h3 {
+  font-size: 1.125em;
+}
 .markdown-body h4,
 .markdown-body h5,
-.markdown-body h6 { font-size: 1em; }
+.markdown-body h6 {
+  font-size: 1em;
+}
 
 .markdown-body p {
   margin-bottom: 0.75em;
@@ -128,8 +136,12 @@ input[type="password"]::-ms-clear {
   list-style-type: disc;
 }
 
-.markdown-body ul ul { list-style-type: circle; }
-.markdown-body ul ul ul { list-style-type: square; }
+.markdown-body ul ul {
+  list-style-type: circle;
+}
+.markdown-body ul ul ul {
+  list-style-type: square;
+}
 
 .markdown-body ol {
   list-style-type: decimal;

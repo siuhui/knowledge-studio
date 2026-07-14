@@ -44,10 +44,10 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
 # Separator priority chain for recursive splitting (highest → lowest).
 _SEPARATORS: list[tuple[str, str]] = [
-    (r"\n\s*\n", "\n\n"),                       # 1. paragraph boundaries
-    (r"\n", "\n"),                               # 2. line breaks
-    (r"(?<=[。.!?！？])\s+", " "),               # 3. sentence endings (zh + en)
-    (r"\s+", " "),                               # 4. word boundaries
+    (r"\n\s*\n", "\n\n"),  # 1. paragraph boundaries
+    (r"\n", "\n"),  # 2. line breaks
+    (r"(?<=[。.!?！？])\s+", " "),  # 3. sentence endings (zh + en)
+    (r"\s+", " "),  # 4. word boundaries
 ]
 
 
@@ -66,9 +66,9 @@ def _estimate_token_count(text: str) -> int:
 class _Replacement:
     """Record of a code-block → placeholder substitution for offset correction."""
 
-    orig_start: int   # position in full_text
+    orig_start: int  # position in full_text
     orig_end: int
-    safe_start: int   # position in safe_text (after all prior replacements)
+    safe_start: int  # position in safe_text (after all prior replacements)
     safe_end: int
 
 
@@ -90,12 +90,14 @@ def _extract_code_blocks(text: str) -> tuple[str, list[str], list[_Replacement]]
         safe_start = orig_start + cum_shift
         safe_end = safe_start + len(placeholder)
         blocks.append(m.group(0))
-        replacements.append(_Replacement(
-            orig_start=orig_start,
-            orig_end=orig_end,
-            safe_start=safe_start,
-            safe_end=safe_end,
-        ))
+        replacements.append(
+            _Replacement(
+                orig_start=orig_start,
+                orig_end=orig_end,
+                safe_start=safe_start,
+                safe_end=safe_end,
+            )
+        )
         cum_shift += len(placeholder) - (orig_end - orig_start)
         return placeholder
 
@@ -123,7 +125,6 @@ def _safe_to_full(safe_pos: int, replacements: list[_Replacement]) -> int:
     return full_pos
 
 
-
 # ── Heading-aware splitting ────────────────────────────────────────────────
 
 
@@ -132,9 +133,9 @@ class _Section:
     """A heading-delimited section with position info in safe_text coordinates."""
 
     text: str
-    safe_start: int      # position in safe_text (inclusive)
-    safe_end: int        # position in safe_text (exclusive)
-    heading_level: int   # 0 = no heading
+    safe_start: int  # position in safe_text (inclusive)
+    safe_end: int  # position in safe_text (exclusive)
+    heading_level: int  # 0 = no heading
     breadcrumb: list[str] = field(default_factory=list)
 
 
@@ -149,23 +150,24 @@ def _split_by_headings(text: str) -> list[_Section]:
     matches = list(_HEADING_RE.finditer(text))
 
     if not matches:
-        return [_Section(text=text, safe_start=0, safe_end=len(text),
-                         heading_level=0, breadcrumb=[])]
+        return [_Section(text=text, safe_start=0, safe_end=len(text), heading_level=0, breadcrumb=[])]
 
     sections: list[_Section] = []
     breadcrumb_stack: list[tuple[int, str]] = []
 
     # Text before the first heading — keep as raw slice
     if matches[0].start() > 0:
-        before = text[:matches[0].start()]
+        before = text[: matches[0].start()]
         if before.strip():
-            sections.append(_Section(
-                text=before,
-                safe_start=0,
-                safe_end=len(before),
-                heading_level=0,
-                breadcrumb=[],
-            ))
+            sections.append(
+                _Section(
+                    text=before,
+                    safe_start=0,
+                    safe_end=len(before),
+                    heading_level=0,
+                    breadcrumb=[],
+                )
+            )
 
     for i, match in enumerate(matches):
         level = len(match.group(1))
@@ -178,13 +180,15 @@ def _split_by_headings(text: str) -> list[_Section]:
         section_start = match.start()
         section_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
 
-        sections.append(_Section(
-            text=text[section_start:section_end],
-            safe_start=section_start,
-            safe_end=section_end,
-            heading_level=level,
-            breadcrumb=[b[1] for b in breadcrumb_stack],
-        ))
+        sections.append(
+            _Section(
+                text=text[section_start:section_end],
+                safe_start=section_start,
+                safe_end=section_end,
+                heading_level=level,
+                breadcrumb=[b[1] for b in breadcrumb_stack],
+            )
+        )
 
     # Merge heading-only sections into their successor when the successor
     # is deeper (e.g. H1 title → H3 chapter).  The breadcrumb stack already
@@ -202,13 +206,15 @@ def _split_by_headings(text: str) -> list[_Section]:
 
         if is_heading_only and next_section is not None and next_section.heading_level > section.heading_level:
             # Merge into successor — its breadcrumb already contains our title
-            merged.append(_Section(
-                text=section.text + next_section.text,
-                safe_start=section.safe_start,
-                safe_end=next_section.safe_end,
-                heading_level=next_section.heading_level,
-                breadcrumb=next_section.breadcrumb,
-            ))
+            merged.append(
+                _Section(
+                    text=section.text + next_section.text,
+                    safe_start=section.safe_start,
+                    safe_end=next_section.safe_end,
+                    heading_level=next_section.heading_level,
+                    breadcrumb=next_section.breadcrumb,
+                )
+            )
             skip = True
         else:
             merged.append(section)
@@ -268,7 +274,10 @@ def _repair_heading_orphans(
 
 
 def _split_level(
-    text: str, *, sep_idx: int, max_chars: int,
+    text: str,
+    *,
+    sep_idx: int,
+    max_chars: int,
 ) -> list[tuple[str, int, int]]:
     """Split using ``_SEPARATORS[sep_idx]``; recurse on oversize pieces.
 
@@ -280,8 +289,7 @@ def _split_level(
 
     if sep_idx >= len(_SEPARATORS):
         # Exhausted all separators — character-level split.
-        return [(text[i:i + max_chars], i, min(i + max_chars, len(text)))
-                for i in range(0, len(text), max_chars)]
+        return [(text[i : i + max_chars], i, min(i + max_chars, len(text))) for i in range(0, len(text), max_chars)]
 
     pattern, join_str = _SEPARATORS[sep_idx]
 
@@ -295,7 +303,7 @@ def _split_level(
     parts: list[tuple[str, int, int]] = []
     prev_end = 0
     for m in delim_matches:
-        part_text = text[prev_end:m.start()]
+        part_text = text[prev_end : m.start()]
         if part_text.strip():
             parts.append((part_text, prev_end, m.start()))
         prev_end = m.end()
@@ -354,12 +362,14 @@ class _Piece:
     """A split piece with absolute positions in safe_text."""
 
     text: str
-    start: int   # inclusive, in safe_text
-    end: int     # exclusive, in safe_text
+    start: int  # inclusive, in safe_text
+    end: int  # exclusive, in safe_text
 
 
 def _split_section(
-    section: _Section, max_chars: int, overlap_chars: int,
+    section: _Section,
+    max_chars: int,
+    overlap_chars: int,
 ) -> list[_Piece]:
     """Split a section recursively, then mark overlap as positional only.
 
@@ -373,11 +383,13 @@ def _split_section(
     # Convert relative → absolute safe_text positions
     result: list[_Piece] = []
     for text, rel_start, rel_end in pieces:
-        result.append(_Piece(
-            text=text,
-            start=section.safe_start + rel_start,
-            end=section.safe_start + rel_end,
-        ))
+        result.append(
+            _Piece(
+                text=text,
+                start=section.safe_start + rel_start,
+                end=section.safe_start + rel_end,
+            )
+        )
 
     if overlap_chars <= 0 or len(result) <= 1:
         return result
@@ -403,8 +415,8 @@ class ChunkCandidate:
     """A chunk ready for persistence, with full source mapping to Document.full_text."""
 
     text: str
-    start_offset: int      # 0-based, inclusive, in Document.full_text
-    end_offset: int        # 0-based, exclusive
+    start_offset: int  # 0-based, inclusive, in Document.full_text
+    end_offset: int  # 0-based, exclusive
     section_path: list[str]
     heading_level: int
     chunk_metadata: dict[str, object]
@@ -430,10 +442,13 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
     safe_text, code_blocks, replacements = _extract_code_blocks(text)
 
     # 2. Split by headings → sections with safe_text positions
-    sections = _split_by_headings(safe_text) if _HEADING_RE.search(safe_text) else [
-        _Section(text=safe_text, safe_start=0, safe_end=len(safe_text),
-                 heading_level=0, breadcrumb=[]),
-    ]
+    sections = (
+        _split_by_headings(safe_text)
+        if _HEADING_RE.search(safe_text)
+        else [
+            _Section(text=safe_text, safe_start=0, safe_end=len(safe_text), heading_level=0, breadcrumb=[]),
+        ]
+    )
 
     # 3–4. Split each section + convert safe_text → full_text
     candidates: list[ChunkCandidate] = []
@@ -443,14 +458,16 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = OVERLAP)
             # Convert from safe_text positions to full_text positions
             abs_start = _safe_to_full(piece.start, replacements)
             abs_end = _safe_to_full(piece.end, replacements)
-            candidates.append(ChunkCandidate(
-                text=piece.text,
-                start_offset=abs_start,
-                end_offset=abs_end,
-                section_path=section.breadcrumb,
-                heading_level=section.heading_level,
-                chunk_metadata={},
-            ))
+            candidates.append(
+                ChunkCandidate(
+                    text=piece.text,
+                    start_offset=abs_start,
+                    end_offset=abs_end,
+                    section_path=section.breadcrumb,
+                    heading_level=section.heading_level,
+                    chunk_metadata={},
+                )
+            )
 
     # 5. Restore code blocks in chunk content
     _code_block_sub = re.compile(r"\{CODEBLOCK_(\d+)\}")
@@ -498,14 +515,16 @@ def chunk_document(db: Session, *, document_id: str) -> int:
     candidates = _chunk_text(document.full_text)
     if not candidates:
         # Fallback: single-chunk the whole text
-        candidates = [ChunkCandidate(
-            text=document.full_text,
-            start_offset=0,
-            end_offset=len(document.full_text),
-            section_path=[],
-            heading_level=0,
-            chunk_metadata={},
-        )]
+        candidates = [
+            ChunkCandidate(
+                text=document.full_text,
+                start_offset=0,
+                end_offset=len(document.full_text),
+                section_path=[],
+                heading_level=0,
+                chunk_metadata={},
+            )
+        ]
 
     chunk_records = []
     for i, c in enumerate(candidates):

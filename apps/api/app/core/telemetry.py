@@ -24,11 +24,40 @@ Spans use ``{domain}.{operation}`` dot-notation:
                   ``studio.report`` → ``studio.report.plan`` /
                   ``studio.report.gather`` / ``studio.report.generate``)
 
+Observation type convention
+----------------------------
+Langfuse supports typed observations (``agent``, ``tool``, ``retriever``,
+``chain``, ``evaluator``, ``generation``, ``embedding``) that enable
+per-type filtering and dashboards in the Langfuse UI.  Our mapping:
+
+    @observe(name="agent.run", as_type="agent")
+    # Agent decision loop — orchestrates tools with LLM guidance
+
+    @observe(name="agent.tool_call", as_type="tool")
+    # Agent tool execution — hybrid_search, read_document, list_documents
+
+    @observe(name="search.retrieve", as_type="retriever")
+    # Data retrieval from PostgreSQL + pgvector
+
+    @observe(name="search.crag.evaluate", as_type="evaluator")
+    # Assesses relevance/correctness of retrieved results
+
+    @observe(name="...", as_type="chain")
+    # Pipeline steps: chat.message, search.rewrite, search.crag.*,
+
+    # LLM and embedding calls are auto-traced by ``langfuse.openai``
+    # → ``generation`` and ``embedding`` types (no manual spans needed)
+
+The default ``@observe`` without ``as_type`` produces a generic ``span``
+observation.  We use typed observations for all new retrieval-pipeline
+spans so the UI can distinguish agent reasoning from tool execution
+from retrieval queries without relying on name-prefix conventions.
+
 LLM and embedding calls are auto-traced by ``langfuse.openai``
 integration — no manual spans needed in ``llm.py`` or ``embedding.py``.
-Business-level orchestration spans (chat, retrieval, pipeline stages,
-agent runs) use ``@observe`` with ``capture_input=False`` and set
-input/output explicitly via ``update_current_span()``.
+Business-level orchestration spans use ``@observe`` with
+``capture_input=False``, ``as_type`` set per the convention above, and
+set input/output explicitly via ``update_current_span()``.
 
 Best-practice compliance:
 
@@ -38,6 +67,9 @@ Best-practice compliance:
   explicitly via ``update_current_span()`` to avoid leaking internals.
 - Span names map to project architecture domains, not generic categories
   like "rag".
+- Observation types (``as_type``) are set on every ``@observe`` so the
+  Langfuse UI can show typed views (agent traces, tool latency, retrieval
+  quality) without manual filtering.
 """
 
 from __future__ import annotations
@@ -79,6 +111,7 @@ __all__ = [
     "update_current_span",
     "trace_context",
     "get_current_trace_id",
+    "create_score",
     "init_telemetry",
     "shutdown_telemetry",
 ]
@@ -148,6 +181,25 @@ def get_current_trace_id() -> str | None:
     if _client is None:
         return None
     return _client.get_current_trace_id()
+
+
+def create_score(
+    *,
+    name: str,
+    value: float,
+    comment: str | None = None,
+    trace_id: str | None = None,
+) -> None:
+    """Record a score on the current trace, or no-op when telemetry is disabled.
+
+    ``trace_id`` defaults to the current trace via ``get_current_trace_id()``.
+    """
+    if _client is None:
+        return
+    tid = trace_id or _client.get_current_trace_id()
+    if tid is None:
+        return
+    _client.create_score(trace_id=tid, name=name, value=value, comment=comment or "")
 
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────

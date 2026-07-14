@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.services.retrieval.rewrite import RewriteResult, SearchMode
+
 
 def _create_kb(client: TestClient, auth_headers: dict, name: str = "Test KB") -> str:
     resp = client.post(
@@ -15,6 +17,11 @@ def _create_kb(client: TestClient, auth_headers: dict, name: str = "Test KB") ->
     )
     assert resp.status_code == 200
     return resp.json()["data"]["id"]
+
+
+def _mock_rewrite_result(*, mode: SearchMode = SearchMode.AGENTIC) -> RewriteResult:
+    """Return a canned RewriteResult — used to avoid real LLM calls in chat tests."""
+    return RewriteResult(mode=mode, reason="test", semantic_query="test query")
 
 
 def _mock_llm_answer(answer: str = "Mock answer") -> AbstractContextManager[MagicMock]:
@@ -28,6 +35,7 @@ def test_send_message_creates_session(client: TestClient, auth_headers: dict):
     kb_id = _create_kb(client, auth_headers)
 
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
         _mock_llm_answer("Mock RAG answer"),
     ):
@@ -36,7 +44,6 @@ def test_send_message_creates_session(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "What is RAG?",
             },
             headers=auth_headers,
@@ -73,6 +80,7 @@ def test_send_message_continues_session(client: TestClient, auth_headers: dict):
 
     # First message creates session
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
         _mock_llm_answer("First answer"),
     ):
@@ -81,7 +89,6 @@ def test_send_message_continues_session(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "First question",
             },
             headers=auth_headers,
@@ -90,6 +97,7 @@ def test_send_message_continues_session(client: TestClient, auth_headers: dict):
 
     # Second message in same session
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
         _mock_llm_answer("Follow-up answer"),
     ):
@@ -98,7 +106,6 @@ def test_send_message_continues_session(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": sess_id,
-                "search_strategy": "hybrid",
                 "content": "Follow-up question",
             },
             headers=auth_headers,
@@ -123,6 +130,7 @@ def test_send_message_auto_names_session(client: TestClient, auth_headers: dict)
     kb_id = _create_kb(client, auth_headers)
 
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
         _mock_llm_answer(),
     ):
@@ -131,7 +139,6 @@ def test_send_message_auto_names_session(client: TestClient, auth_headers: dict)
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "Explain retrieval augmented generation in detail",
             },
             headers=auth_headers,
@@ -163,7 +170,6 @@ def test_send_message_session_not_found(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": "nonexistent-session-id",
-                "search_strategy": "hybrid",
                 "content": "Hello",
             },
             headers=auth_headers,
@@ -189,7 +195,6 @@ def test_send_message_cross_kb_session(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb1_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "Question in KB1",
             },
             headers=auth_headers,
@@ -203,7 +208,6 @@ def test_send_message_cross_kb_session(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb2_id,
                 "session_id": sess_id,
-                "search_strategy": "hybrid",
                 "content": "Access via KB2",
             },
             headers=auth_headers,
@@ -239,7 +243,6 @@ def test_send_message_requires_auth(client: TestClient):
         json={
             "knowledge_base_id": "fake-kb",
             "session_id": None,
-            "search_strategy": "hybrid",
             "content": "Hello",
         },
     )
@@ -275,6 +278,7 @@ def test_stream_message_returns_sse_events(client: TestClient, auth_headers: dic
     kb_id = _create_kb(client, auth_headers)
 
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.chat.get_async_provider") as mock_get,
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
     ):
@@ -287,7 +291,6 @@ def test_stream_message_returns_sse_events(client: TestClient, auth_headers: dic
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "What is RAG?",
             },
             headers=auth_headers,
@@ -315,6 +318,7 @@ def test_stream_message_continues_session(client: TestClient, auth_headers: dict
     kb_id = _create_kb(client, auth_headers)
 
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.chat.get_async_provider") as mock_get,
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
     ):
@@ -325,7 +329,7 @@ def test_stream_message_continues_session(client: TestClient, auth_headers: dict
         with client.stream(
             "POST",
             "/api/v1/chat/messages/stream",
-            json={"knowledge_base_id": kb_id, "session_id": None, "search_strategy": "hybrid", "content": "First"},
+            json={"knowledge_base_id": kb_id, "session_id": None, "content": "First"},
             headers=auth_headers,
         ) as resp:
             events1 = _parse_sse_events(resp)
@@ -335,7 +339,7 @@ def test_stream_message_continues_session(client: TestClient, auth_headers: dict
         with client.stream(
             "POST",
             "/api/v1/chat/messages/stream",
-            json={"knowledge_base_id": kb_id, "session_id": sess_id, "search_strategy": "hybrid", "content": "Second"},
+            json={"knowledge_base_id": kb_id, "session_id": sess_id, "content": "Second"},
             headers=auth_headers,
         ) as resp:
             events2 = _parse_sse_events(resp)
@@ -349,7 +353,10 @@ def test_stream_message_no_documents(client: TestClient, auth_headers: dict):
     """When no documents are selected, tokens still stream with chat system prompt."""
     kb_id = _create_kb(client, auth_headers)
 
-    with patch("app.services.chat.get_async_provider") as mock_get:
+    with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
+        patch("app.services.chat.get_async_provider") as mock_get,
+    ):
         mock_provider = mock_get.return_value
         mock_provider.generate_stream = _token_gen
 
@@ -360,7 +367,6 @@ def test_stream_message_no_documents(client: TestClient, auth_headers: dict):
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
                 "content": "Hello",
                 "reference_document_ids": [],
             },
@@ -389,7 +395,6 @@ def test_stream_message_session_not_found(client: TestClient, auth_headers: dict
         json={
             "knowledge_base_id": kb_id,
             "session_id": "nonexistent-id",
-            "search_strategy": "hybrid",
             "content": "Hello",
         },
         headers=auth_headers,
@@ -409,6 +414,7 @@ def test_stream_message_cross_kb_rejected(client: TestClient, auth_headers: dict
 
     # Create session in KB1
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.chat.get_async_provider") as mock_get,
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
     ):
@@ -418,7 +424,7 @@ def test_stream_message_cross_kb_rejected(client: TestClient, auth_headers: dict
         with client.stream(
             "POST",
             "/api/v1/chat/messages/stream",
-            json={"knowledge_base_id": kb1_id, "session_id": None, "search_strategy": "hybrid", "content": "Q"},
+            json={"knowledge_base_id": kb1_id, "session_id": None, "content": "Q"},
             headers=auth_headers,
         ) as resp:
             events = _parse_sse_events(resp)
@@ -428,7 +434,7 @@ def test_stream_message_cross_kb_rejected(client: TestClient, auth_headers: dict
     with client.stream(
         "POST",
         "/api/v1/chat/messages/stream",
-        json={"knowledge_base_id": kb2_id, "session_id": sess_id, "search_strategy": "hybrid", "content": "Q2"},
+        json={"knowledge_base_id": kb2_id, "session_id": sess_id, "content": "Q2"},
         headers=auth_headers,
     ) as response:
         assert response.status_code == 200
@@ -448,6 +454,7 @@ def test_stream_message_llm_error(client: TestClient, auth_headers: dict):
         raise RuntimeError("API down")
 
     with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
         patch("app.services.chat.get_async_provider") as mock_get,
         patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
     ):
@@ -457,7 +464,7 @@ def test_stream_message_llm_error(client: TestClient, auth_headers: dict):
         with client.stream(
             "POST",
             "/api/v1/chat/messages/stream",
-            json={"knowledge_base_id": kb_id, "session_id": None, "search_strategy": "hybrid", "content": "Q"},
+            json={"knowledge_base_id": kb_id, "session_id": None, "content": "Q"},
             headers=auth_headers,
         ) as response:
             assert response.status_code == 200
@@ -489,7 +496,7 @@ def test_stream_message_empty_content(client: TestClient, auth_headers: dict):
 def test_stream_message_requires_auth(client: TestClient):
     resp = client.post(
         "/api/v1/chat/messages/stream",
-        json={"knowledge_base_id": "fake-kb", "session_id": None, "search_strategy": "hybrid", "content": "Hello"},
+        json={"knowledge_base_id": "fake-kb", "session_id": None, "content": "Hello"},
     )
     assert resp.status_code == 401
 
@@ -499,36 +506,43 @@ def test_stream_message_requires_auth(client: TestClient):
 # ═══════════════════════════════════════════════════════════════════
 
 
-def test_unknown_search_strategy_returns_error(client: TestClient, auth_headers: dict):
-    """Invalid strategy name should return a 422 with SEARCH_STRATEGY_UNKNOWN."""
+def test_unknown_search_mode_returns_error(client: TestClient, auth_headers: dict):
+    """Invalid mode name should return a 422 with SEARCH_STRATEGY_UNKNOWN."""
     kb_id = _create_kb(client, auth_headers)
 
-    resp = client.post(
-        "/api/v1/chat/messages",
-        json={
-            "knowledge_base_id": kb_id,
-            "session_id": None,
-            "search_strategy": "nonexistent_strategy",
-            "content": "Hello",
-        },
-        headers=auth_headers,
-    )
+    with patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()):
+        resp = client.post(
+            "/api/v1/chat/messages",
+            json={
+                "knowledge_base_id": kb_id,
+                "session_id": None,
+                "search_mode": "nonexistent_mode",
+                "content": "Hello",
+            },
+            headers=auth_headers,
+        )
     assert resp.status_code == 422
     assert resp.json()["code"] == "SEARCH_STRATEGY_UNKNOWN"
 
 
-def test_hybrid_strategy_no_agent_steps(client: TestClient, auth_headers: dict):
-    """Hybrid strategy should not include agent_steps in the retrieval response."""
+def test_direct_mode_no_agent_steps(client: TestClient, auth_headers: dict):
+    """Direct mode should not include agent_steps in the retrieval response."""
     kb_id = _create_kb(client, auth_headers)
 
-    with patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]):
+    with (
+        patch("app.services.chat.route_and_rewrite", return_value=_mock_rewrite_result()),
+        patch("app.services.chat.crag_evaluate_and_act") as mock_crag,
+        patch("app.services.embedding.embedder.embed", return_value=[[0.0] * 1024]),
+    ):
+        mock_crag.return_value = MagicMock(action="answer", chunks=[])
+
         with client.stream(
             "POST",
             "/api/v1/chat/messages/stream",
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "hybrid",
+                "search_mode": "direct",
                 "content": "Hello",
             },
             headers=auth_headers,
@@ -539,38 +553,39 @@ def test_hybrid_strategy_no_agent_steps(client: TestClient, auth_headers: dict):
     # No thought/tool_call/tool_result events from agent
     agent_event_types = {"thought", "tool_call", "tool_result"}
     for event in events:
-        assert event["type"] not in agent_event_types, (
-            f"Hybrid strategy should not emit agent events, got {event['type']}"
-        )
+        assert event["type"] not in agent_event_types, f"Direct mode should not emit agent events, got {event['type']}"
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Agentic strategy tests
+# Agentic mode tests
 # ═══════════════════════════════════════════════════════════════════
 
 
-def test_agentic_strategy_sync_returns_answer(client: TestClient, auth_headers: dict):
-    """Agentic strategy should complete retrieval and produce an answer."""
+def test_agentic_mode_sync_returns_answer(client: TestClient, auth_headers: dict):
+    """Agentic mode should complete retrieval and produce an answer."""
     kb_id = _create_kb(client, auth_headers)
 
-    from app.services.retrieval.strategies import STRATEGIES
-
-    agentic_strategy = STRATEGIES["agentic"]
+    from app.services.retrieval.rewrite import RewriteResult, SearchMode
 
     with (
-        patch.object(
-            agentic_strategy,
-            "search",
-            return_value=_make_mock_retrieval_response(),
-        ),
+        patch("app.services.chat.route_and_rewrite") as mock_route,
+        patch("app.services.chat.RetrievalService.search") as mock_search,
         _mock_llm_answer("LLM follow-up"),
     ):
+        mock_route.return_value = RewriteResult(
+            mode=SearchMode.AGENTIC,
+            reason="Complex query",
+            semantic_query="What is this about?",
+            lexical_queries=["this topic", "topic overview"],
+        )
+        mock_search.return_value = _make_mock_retrieval_response()
+
         resp = client.post(
             "/api/v1/chat/messages",
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "agentic",
+                "search_mode": "agentic",
                 "content": "What is this about?",
             },
             headers=auth_headers,
@@ -581,22 +596,24 @@ def test_agentic_strategy_sync_returns_answer(client: TestClient, auth_headers: 
     assert data["data"]["answer"] == "LLM follow-up"
 
 
-def test_agentic_strategy_stream_yields_agent_progress(client: TestClient, auth_headers: dict):
-    """Agentic strategy stream should emit agent_progress events before tokens."""
+def test_agentic_mode_stream_yields_agent_progress(client: TestClient, auth_headers: dict):
+    """Agentic mode stream should emit agent_progress events before tokens."""
     kb_id = _create_kb(client, auth_headers)
 
-    from app.services.retrieval.strategies import STRATEGIES
-
-    agentic_strategy = STRATEGIES["agentic"]
+    from app.services.retrieval.rewrite import RewriteResult, SearchMode
 
     with (
-        patch.object(
-            agentic_strategy,
-            "search",
-            return_value=_make_mock_retrieval_response(with_agent_steps=True),
-        ),
+        patch("app.services.chat.route_and_rewrite") as mock_route,
+        patch("app.services.chat.RetrievalService.search") as mock_search,
         patch("app.services.chat.get_async_provider") as mock_get,
     ):
+        mock_route.return_value = RewriteResult(
+            mode=SearchMode.AGENTIC,
+            reason="Complex query",
+            semantic_query="Research this topic",
+            lexical_queries=["research topic", "topic analysis"],
+        )
+        mock_search.return_value = _make_mock_retrieval_response(with_agent_steps=True)
         mock_provider = mock_get.return_value
         mock_provider.generate_stream = _token_gen
 
@@ -606,7 +623,7 @@ def test_agentic_strategy_stream_yields_agent_progress(client: TestClient, auth_
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "agentic",
+                "search_mode": "agentic",
                 "content": "Research this topic",
             },
             headers=auth_headers,
@@ -631,22 +648,24 @@ def test_agentic_strategy_stream_yields_agent_progress(client: TestClient, auth_
         assert max(progress_indices) < min(token_indices), "agent_progress events should appear before LLM token events"
 
 
-def test_agentic_strategy_stream_agent_progress_always_emitted(client: TestClient, auth_headers: dict):
+def test_agentic_mode_stream_agent_progress_always_emitted(client: TestClient, auth_headers: dict):
     """agent_progress events are emitted by default — no reveal_steps flag needed."""
     kb_id = _create_kb(client, auth_headers)
 
-    from app.services.retrieval.strategies import STRATEGIES
-
-    agentic_strategy = STRATEGIES["agentic"]
+    from app.services.retrieval.rewrite import RewriteResult, SearchMode
 
     with (
-        patch.object(
-            agentic_strategy,
-            "search",
-            return_value=_make_mock_retrieval_response(with_agent_steps=True),
-        ),
+        patch("app.services.chat.route_and_rewrite") as mock_route,
+        patch("app.services.chat.RetrievalService.search") as mock_search,
         patch("app.services.chat.get_async_provider") as mock_get,
     ):
+        mock_route.return_value = RewriteResult(
+            mode=SearchMode.AGENTIC,
+            reason="Complex query",
+            semantic_query="Research this topic",
+            lexical_queries=["research topic"],
+        )
+        mock_search.return_value = _make_mock_retrieval_response(with_agent_steps=True)
         mock_provider = mock_get.return_value
         mock_provider.generate_stream = _token_gen
 
@@ -656,9 +675,8 @@ def test_agentic_strategy_stream_agent_progress_always_emitted(client: TestClien
             json={
                 "knowledge_base_id": kb_id,
                 "session_id": None,
-                "search_strategy": "agentic",
+                "search_mode": "agentic",
                 "content": "Research this topic",
-                # No reveal_steps — agent_progress is always emitted
             },
             headers=auth_headers,
         ) as response:
@@ -683,7 +701,7 @@ def test_agentic_strategy_stream_agent_progress_always_emitted(client: TestClien
 
 
 def _make_mock_retrieval_response(with_agent_steps: bool = False):
-    """Build a RetrievalQueryResponse for testing the agentic strategy path."""
+    """Build a RetrievalQueryResponse for testing the agentic mode path."""
     from app.schemas.retrieval.citation import Citation
     from app.schemas.retrieval.response import RetrievalChunk, RetrievalQueryResponse
 

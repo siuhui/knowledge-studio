@@ -1,4 +1,5 @@
 """Smoke tests for the Markdown-output parsers."""
+
 import io
 
 import fitz  # PyMuPDF
@@ -91,7 +92,7 @@ class TestPdfParser:
         assert "Operating margin" in result
 
         lines = result.split("\n")
-        heading_lines = [l for l in lines if l.startswith("#")]
+        heading_lines = [line for line in lines if line.startswith("#")]
 
         # With font sizes 18 and 14 vs body 11, heading detection should fire
         # at least once.  Whether it fires for both depends on how PyMuPDF
@@ -138,12 +139,7 @@ class TestPdfParser:
 
 class TestHtmlParser:
     def test_markdown_output(self):
-        html = (
-            b"<html><body>"
-            b"<h1>Title</h1>"
-            b"<p>A paragraph.</p>"
-            b"</body></html>"
-        )
+        html = b"<html><body><h1>Title</h1><p>A paragraph.</p></body></html>"
         result = HtmlParser().parse(html)
         assert "Title" in result
         assert "paragraph" in result

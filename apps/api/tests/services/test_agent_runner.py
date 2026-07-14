@@ -7,7 +7,7 @@ import pytest
 
 from app.services.agent.configs import GATHER_AGENT_CONFIG, SEARCH_AGENT_CONFIG
 from app.services.agent.runner import AgentRunner
-from app.services.agent.tools import list_documents, read_document, search_keywords
+from app.services.agent.tools import hybrid_search, list_documents, read_document
 from app.services.agent.types import (
     AgentConfig,
     AgentResult,
@@ -85,9 +85,9 @@ class TestAgentConfig:
 
 class TestArtifact:
     def test_valid_artifact(self):
-        a = Artifact(data={"key": "value", "num": 42}, source="doc-1")
+        a = Artifact(data={"key": "value", "num": 42}, doc_id="doc-1")
         assert a.data == {"key": "value", "num": 42}
-        assert a.source == "doc-1"
+        assert a.doc_id == "doc-1"
 
     def test_to_json(self):
         a = Artifact(data={"x": 1})
@@ -103,13 +103,14 @@ class TestArtifact:
 
 
 class TestTools:
-    def test_search_keywords_structure(self):
-        """Verify tool has correct protocol attributes."""
-        assert search_keywords.name == "search_keywords"
-        assert search_keywords.parameters["type"] == "object"
-        assert "properties" in search_keywords.parameters
-        assert "required" in search_keywords.parameters
-        assert callable(search_keywords.execute)
+    def test_hybrid_search_structure(self):
+        """Verify hybrid_search has correct protocol attributes."""
+        assert hybrid_search.name == "hybrid_search"
+        assert hybrid_search.parameters["type"] == "object"
+        assert "properties" in hybrid_search.parameters
+        assert "required" in hybrid_search.parameters
+        assert "embedding_query" in hybrid_search.parameters["required"]
+        assert callable(hybrid_search.execute)
 
     def test_read_document_structure(self):
         assert read_document.name == "read_document"
@@ -120,22 +121,6 @@ class TestTools:
         assert list_documents.name == "list_documents"
         assert callable(list_documents.execute)
 
-    def test_search_keywords_executes(self, db):
-        """search_keywords should run FTS query and return ToolResult."""
-        ctx = ToolContext(db=db, kb_id="kb-test")
-        result = search_keywords.execute(ctx, query="test")
-        assert isinstance(result, ToolResult)
-        assert isinstance(result.summary, str)
-        assert isinstance(result.artifacts, list)
-        assert result.artifact_count == len(result.artifacts)
-
-    def test_read_document_not_found(self, db):
-        """read_document should handle missing documents gracefully."""
-        ctx = ToolContext(db=db, kb_id="kb-test")
-        result = read_document.execute(ctx, document_id="nonexistent-id")
-        assert result.artifact_count == 0
-        assert "not found" in result.summary.lower()
-
     def test_list_documents_executes(self, db):
         """list_documents should return ToolResult with correct structure."""
         ctx = ToolContext(db=db, kb_id="kb-test")
@@ -143,6 +128,13 @@ class TestTools:
         assert isinstance(result, ToolResult)
         assert isinstance(result.summary, str)
         assert "document_count" in result.metadata
+
+    def test_read_document_not_found(self, db):
+        """read_document should handle missing documents gracefully."""
+        ctx = ToolContext(db=db, kb_id="kb-test")
+        result = read_document.execute(ctx, document_id="nonexistent-id")
+        assert result.artifact_count == 0
+        assert "not found" in result.summary.lower()
 
 
 # ── AgentRunner tests ────────────────────────────────────────────────────────
@@ -170,7 +162,7 @@ class TestAgentRunnerLoop:
         mock_tool.parameters = {"type": "object", "properties": {}}
         mock_tool.execute.return_value = ToolResult(
             summary="Found: Paris is the capital of France.",
-            artifacts=[Artifact(data={"fact": "Paris"}, source="doc-1")],
+            artifacts=[Artifact(data={"fact": "Paris"}, doc_id="doc-1")],
             artifact_count=1,
         )
 
@@ -200,12 +192,12 @@ class TestAgentRunnerLoop:
         mock_tool.execute.side_effect = [
             ToolResult(
                 summary="First search: found document A.",
-                artifacts=[Artifact(data={"doc": "A"}, source="a")],
+                artifacts=[Artifact(data={"doc": "A"}, doc_id="a")],
                 artifact_count=1,
             ),
             ToolResult(
                 summary="Second search: found document B.",
-                artifacts=[Artifact(data={"doc": "B"}, source="b")],
+                artifacts=[Artifact(data={"doc": "B"}, doc_id="b")],
                 artifact_count=1,
             ),
         ]
@@ -271,7 +263,7 @@ class TestAgentRunnerLoop:
         mock_tool.execute.side_effect = [
             ToolResult(
                 summary="Found something.",
-                artifacts=[Artifact(data={"x": 1}, source="s1")],
+                artifacts=[Artifact(data={"x": 1}, doc_id="s1")],
                 artifact_count=1,
             ),
             ToolResult(summary="Dry 1.", artifacts=[], artifact_count=0),
@@ -307,7 +299,7 @@ class TestAgentRunnerLoop:
         mock_tool.parameters = {"type": "object", "properties": {}}
         mock_tool.execute.return_value = ToolResult(
             summary="Found.",
-            artifacts=[Artifact(data={"x": 1}, source="s1")],
+            artifacts=[Artifact(data={"x": 1}, doc_id="s1")],
             artifact_count=1,
         )
 
@@ -390,14 +382,14 @@ class TestAgentRunnerLoop:
             ToolResult(
                 summary="Found 2 docs.",
                 artifacts=[
-                    Artifact(data={"id": "a"}, source="a"),
-                    Artifact(data={"id": "b"}, source="b"),
+                    Artifact(data={"id": "a"}, doc_id="a"),
+                    Artifact(data={"id": "b"}, doc_id="b"),
                 ],
                 artifact_count=2,
             ),
             ToolResult(
                 summary="Found 1 doc.",
-                artifacts=[Artifact(data={"id": "c"}, source="c")],
+                artifacts=[Artifact(data={"id": "c"}, doc_id="c")],
                 artifact_count=1,
             ),
         ]
@@ -426,7 +418,7 @@ class TestAgentRunnerLoop:
         mock_tool.parameters = {"type": "object", "properties": {}}
         mock_tool.execute.return_value = ToolResult(
             summary="Found 1.",
-            artifacts=[Artifact(data={"x": 1}, source="s1")],
+            artifacts=[Artifact(data={"x": 1}, doc_id="s1")],
             artifact_count=1,
         )
 
@@ -459,11 +451,11 @@ class TestAgentRunnerLoop:
 class TestPrebuiltConfigs:
     def test_search_agent_config(self):
         config = SEARCH_AGENT_CONFIG
-        assert config.max_rounds == 5
+        assert config.max_rounds == 4
         assert config.early_stop_patience == 2
         assert len(config.tools) == 3
         tool_names = {t.name for t in config.tools}
-        assert tool_names == {"search_keywords", "read_document", "list_documents"}
+        assert tool_names == {"hybrid_search", "read_document", "list_documents"}
 
     def test_gather_agent_config(self):
         config = GATHER_AGENT_CONFIG
@@ -471,7 +463,7 @@ class TestPrebuiltConfigs:
         assert config.early_stop_patience == 3
         assert len(config.tools) == 3
         tool_names = {t.name for t in config.tools}
-        assert tool_names == {"search_keywords", "read_document", "list_documents"}
+        assert tool_names == {"hybrid_search", "read_document", "list_documents"}
 
 
 # ── ToolSpec conversion test ─────────────────────────────────────────────────
@@ -507,7 +499,7 @@ class TestAgentRunnerStream:
         mock_tool.parameters = {"type": "object", "properties": {}}
         mock_tool.execute.return_value = ToolResult(
             summary="Found 1.",
-            artifacts=[Artifact(data={"x": 1}, source="s1")],
+            artifacts=[Artifact(data={"x": 1}, doc_id="s1")],
             artifact_count=1,
         )
 

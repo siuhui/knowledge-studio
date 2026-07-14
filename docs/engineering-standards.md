@@ -82,7 +82,7 @@ knowledge-base/
 │   │   │   │   │   ├── __init__.py
 │   │   │   │   │   ├── runner.py      #     AgentRunner（ReAct 循环）
 │   │   │   │   │   ├── types.py       #     AgentConfig, Tool, AgentResult, ToolResult
-│   │   │   │   │   ├── tools.py       #     search_keywords, read_document, list_documents
+│   │   │   │   │   ├── tools.py       #     hybrid_search, read_document, list_documents
 │   │   │   │   │   └── configs.py     #     SEARCH_AGENT_CONFIG, GATHER_AGENT_CONFIG
 │   │   │   │   ├── indexing/          #    入库 pipeline
 │   │   │   │   │   ├── __init__.py
@@ -375,6 +375,39 @@ open http://localhost:8000/redoc    # ReDoc
 - 类型注解必须（mypy `strict = true`）
 - 文档字符串用英文，注释可以用中文
 - 禁止裸 `except:`，禁止 `except Exception: pass`
+
+### 5.1.1 Import 规范
+
+**顺序**：stdlib → third-party → project，三段之间空行分隔，ruff `I001` 自动检查。
+
+**模块级 import 优先**。以下情况允许函数内 import：
+
+| 场景 | 判断 | 示例 |
+|------|------|------|
+| 避免循环导入 | **允许** | `service.py` 的函数内 `from app.services.agent import AgentRunner`，因为 `agent/` 内部可能引用回 `service.py` |
+| 冷路径（很少执行） | **允许** | CRAG 回退逻辑里 import `query_rewriter`——只在检索结果不相关时才触发 |
+| 热路径且无循环风险 | **禁止** | 每次请求都走的路径里 import 一个没有循环依赖的模块，应提升到模块级 |
+
+```python
+# ✅ 模块级 — 无循环风险的标准 import
+from app.core.telemetry import create_score, observe, update_current_span
+
+# ✅ 函数内 — 避免循环：retrieval.service ↔ agent.runner
+def _agentic_search(db, ...):
+    from app.services.agent import SEARCH_AGENT_CONFIG, AgentRunner
+    ...
+
+# ✅ TYPE_CHECKING — 仅类型注解所需，运行时不可见
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.services.llm import LLMProvider
+
+# ❌ 热路径 + 无循环风险 — 应提到模块级
+def _direct_search(db, ...):
+    from app.models.chunk import Chunk  # Chunk 和 service.py 没有循环依赖
+```
+
+**原则**：一个 import 在函数内出现 3 次以上 → 审视是否有循环依赖。没有循环就提升到模块级；有循环就接受，这是 Python 的标准做法（CPython 标准库自己也在用）。
 
 ### 5.2 配置管理
 

@@ -118,7 +118,9 @@ function ContentView({ document }: { document: DocumentDetail }) {
       }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [document.id, document.chunks]);
 
   const chunkJoin = document.chunks.map((c) => c.content).join("\n");
@@ -155,7 +157,9 @@ function ContentView({ document }: { document: DocumentDetail }) {
                   </span>
                 </div>
                 {/* ── Raw chunk content ── */}
-                <pre className="text-sm text-[#2F3437] leading-relaxed whitespace-pre-wrap break-words font-sans m-0">{chunk.content}</pre>
+                <pre className="text-sm text-[#2F3437] leading-relaxed whitespace-pre-wrap break-words font-sans m-0">
+                  {chunk.content}
+                </pre>
               </div>
             </div>
           ))

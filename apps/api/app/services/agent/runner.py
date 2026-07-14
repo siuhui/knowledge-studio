@@ -182,7 +182,7 @@ class AgentRunner:
                 # AgentResult.final_answer can be populated consistently
                 final_artifact = Artifact(
                     data={"answer": final_content},
-                    source=None,
+                    doc_id=None,
                 )
                 final_tool_result = ToolResult(
                     summary=final_content,
@@ -299,11 +299,7 @@ class AgentRunner:
             # The assistant message carries the tool call so both OpenAI
             # (tool_call_id bridging) and Anthropic (user/assistant alternation)
             # receive a well-formed conversation transcript.
-            observe_text = (
-                f"Tool '{tool_name}' result:\n{tool_result.summary}\n"
-                f"(Found {tool_result.artifact_count} item(s). "
-                f"Use read_document to get full context if needed.)"
-            )
+            observe_text = f"Tool '{tool_name}' result:\n{tool_result.summary}"
             tool_call_id = f"call_{round_num}"
             assistant_msg: dict[str, Any] = {
                 "role": "assistant",
@@ -361,7 +357,7 @@ class AgentRunner:
 
     # ── Sync consumer ──────────────────────────────────────────────────────
 
-    @observe(name="agent.run", capture_input=False, capture_output=False)
+    @observe(name="agent.run", as_type="agent", capture_input=False, capture_output=False)
     def run(self, task: str, ctx: ToolContext) -> AgentResult:
         """Execute synchronously. Consumes all _run_impl events, builds AgentResult.
 
@@ -423,7 +419,7 @@ class AgentRunner:
 
     # ── Streaming consumer ─────────────────────────────────────────────────
 
-    @observe(name="agent.run.stream", capture_input=False, capture_output=False)
+    @observe(name="agent.run.stream", as_type="agent", capture_input=False, capture_output=False)
     async def run_stream(self, task: str, ctx: ToolContext) -> AsyncIterator[str]:
         """Stream execution. Yields SSE-formatted JSON strings.
 

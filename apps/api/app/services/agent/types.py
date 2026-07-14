@@ -55,7 +55,7 @@ class Artifact:
     """
 
     data: dict[str, object]  # JSON-serializable dict
-    source: str | None = None  # Data origin (e.g. document_id), used for citation
+    doc_id: str | None = None  # Originating document ID, used for citation
 
     def __post_init__(self) -> None:
         try:

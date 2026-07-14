@@ -34,13 +34,13 @@ User ──1:N──> KnowledgeBase ──1:N──> Source ──1:N──> Doc
                                      ChatSession ──1:N──> ChatMessage
 Document ──1:1──> DocumentIndexStatus
 
-RAG: parse → chunk → embed → search (agentic=default, hybrid=optional) → LLM answer
+RAG: parse → chunk → embed → search (agentic=default, direct=fallback) → LLM answer
       indexing/pipeline.py                 retrieval/strategies/
 ```
 
 Key modules:
 - `services/agent/` — generic ReAct loop (`AgentRunner` + `AgentConfig`), business-agnostic
-- `services/retrieval/strategies/` — `agentic` (FTS on full_text, zero embedding) + `hybrid` (pgvector+RRF)
+- `services/retrieval/service.py` — `RetrievalService.search()` dispatches between `agentic` (multi-round agent) and `direct` (single-pass hybrid + CRAG)
 - `services/llm.py` — `LLMProvider` Protocol: `generate()`, `generate_with_tools()`, `generate_stream()`
 - `services/chat.py` — `send_message` (sync) + `stream_message` (SSE async generator)
 - `core/telemetry.py` — Langfuse v4: `@observe()`, `langfuse.openai` auto-tracing, no-op when disabled
@@ -59,7 +59,7 @@ Key modules:
 ## Gotchas
 
 - **Anthropic `generate_with_tools()` raises `NotImplementedError`** — agent mode requires OpenAI-compatible provider
-- **Agentic search needs no Chunk or embedding** — runs on `Document.full_text` via PostgreSQL FTS only
+- **Both retrieval modes depend on Chunk** — agentic uses `hybrid_search` (Chunk-level FTS + vector + RRF), direct uses `hybrid_retrieve` same pipeline
 - **embedding dimension is configurable** (`KB_EMBEDDING__DIMENSION`, default 1024), not hardcoded
 - **`Document.status` ≠ indexing progress** — content lifecycle only (`pending/ready/failed`); chunk/embed state is in `DocumentIndexStatus` (1:1)
 - **`source_id` is nullable** on Document (SET NULL on source delete); **`knowledge_base_id` is not nullable** — it's the canonical KB reference, not just denormalization (required because source can be deleted)

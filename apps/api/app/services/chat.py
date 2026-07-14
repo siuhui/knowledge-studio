@@ -6,7 +6,8 @@ from typing import Any
 import structlog
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ValidationError
+from app.core.response_codes import ResponseCode
 from app.core.telemetry import get_current_trace_id, observe, trace_context, update_current_span
 from app.models.chat_message import ChatMessage
 from app.repositories.message import MessageRepository
@@ -15,6 +16,8 @@ from app.schemas.chat import ChatResponse
 from app.schemas.retrieval.citation import Citation
 from app.schemas.retrieval.response import RetrievalQueryResponse
 from app.services.llm import get_async_provider, llm_provider
+from app.services.retrieval.crag import crag_evaluate_and_act
+from app.services.retrieval.rewrite import route_and_rewrite
 from app.services.retrieval.service import RetrievalService
 from app.services.session import DEFAULT_SESSION_TITLE, SessionService, auto_title
 
@@ -22,11 +25,20 @@ logger = structlog.get_logger(__name__)
 
 RAG_SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions based on the provided context. "
-    "Always cite the source document when using information from the context. "
+    "Respond in the same language as the user's question. "
+    "When using information from the context, reference the document using "
+    "the format '(Reference: <doc name>)'. "
     "If the context doesn't contain enough information to answer, say so clearly."
 )
 
 CHAT_SYSTEM_PROMPT = "You are a helpful assistant. Answer the user's question concisely and accurately."
+
+FALLBACK_SYSTEM_PROMPT = (
+    "You are a helpful assistant. The user's query included a note about the knowledge-base "
+    "retrieval status — read it carefully. Answer the question based on your own knowledge, "
+    "but first briefly tell the user about the retrieval situation (no documents selected / "
+    "nothing found / search error) so they know why you're not using their documents."
+)
 
 
 def _build_citations(retrieval: RetrievalQueryResponse | None) -> list[dict[str, Any]]:
@@ -55,15 +67,15 @@ def _build_context(retrieval: RetrievalQueryResponse | None) -> str:
     for r in retrieval.results:
         section = " > ".join(r.section_path)
         if section:
-            parts.append(f"[Source: {r.document_title} | Section: {section}]\n{r.content}")
+            parts.append(f"[Reference: {r.document_title} | Section: {section}]\n{r.content}")
         else:
-            parts.append(f"[Source: {r.document_title}]\n{r.content}")
+            parts.append(f"[Reference: {r.document_title}]\n{r.content}")
     return "\n\n".join(parts)
 
 
 class ChatService:
     @staticmethod
-    @observe(name="chat.message", capture_input=False, capture_output=False)
+    @observe(name="chat.message", as_type="chain", capture_input=False, capture_output=False)
     def send_message(
         db: Session,
         *,
@@ -72,63 +84,114 @@ class ChatService:
         session_id: str | None,
         content: str,
         reference_document_ids: list[str] | None = None,
-        search_strategy: str = "agentic",
+        search_mode: str | None = None,
     ) -> ChatResponse:
         """Send a chat message. Auto-creates session if session_id is None.
 
         LLM generation is auto-traced by ``langfuse.openai`` integration.
         """
-        doc_ids = reference_document_ids
-
         # Explicitly set trace input to only the relevant user query
         update_current_span(
-            input={"query": content, "kb_id": kb_id, "strategy": search_strategy},
+            input={"query": content, "kb_id": kb_id, "mode": search_mode},
+            metadata={"search_mode": search_mode},
         )
 
         # 1. Resolve session (outside trace_context so new sessions get real IDs)
         if session_id is None:
-            session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
+            session = SessionService.create(
+                db, kb_id=kb_id, user_id=user_id, reference_document_ids=reference_document_ids
+            )
             session_id = session.id
         else:
             session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
-            if reference_document_ids is None:
-                doc_ids = session.reference_document_ids
+
+        doc_ids = session.reference_document_ids
 
         with trace_context(
             user_id=user_id,
             session_id=session_id,
             tags=["chat", "sync"],
         ):
-            # 2. Retrieve (auto-traced via @observe on RetrievalService.search)
+            # ── 0. Route & Rewrite — 1 LLM call: classify + decontextualize + lexical queries ──
+            history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
+            route_result = route_and_rewrite(llm_provider, content, history=history)
+
+            # Validate search_mode override
+            if search_mode is not None and search_mode not in ("direct", "agentic"):
+                raise ValidationError(
+                    code=ResponseCode.SEARCH_STRATEGY_UNKNOWN,
+                    message=f"Unknown search mode: '{search_mode}'. Available: ['direct', 'agentic']",
+                )
+
+            # Determine effective mode — explicit user choice overrides LLM routing
+            effective_mode = search_mode if search_mode is not None else route_result.mode.value
+
+            # ── 2. Retrieve ──
+            retrieval: RetrievalQueryResponse | None = None
+            fallback_note: str | None = None
+
             if doc_ids is not None and len(doc_ids) == 0:
-                retrieval = None
-            else:
+                fallback_note = "No documents selected in the knowledge base. Select documents before asking."
+            elif effective_mode == "agentic":
+                # Agentic mode — multi-round agent loop (no CRAG — agent self-corrects)
                 retrieval = RetrievalService.search(
                     db,
-                    query=content,
+                    query=route_result.semantic_query,
                     knowledge_base_id=kb_id,
                     top_k=10,
                     document_ids=doc_ids,
-                    strategy=search_strategy,
+                    mode="agentic",
+                )
+            else:
+                # Direct mode — single-pass hybrid + CRAG
+                retrieval = RetrievalService.search(
+                    db,
+                    query=route_result.semantic_query,
+                    knowledge_base_id=kb_id,
+                    top_k=10,
+                    document_ids=doc_ids,
+                    mode="direct",
+                    lexical_queries=route_result.lexical_queries,
                 )
 
-            # 3. Build context + messages
+                # CRAG gate — evaluate relevance; correct once if needed
+                if retrieval:
+                    crag_result = crag_evaluate_and_act(
+                        db,
+                        query=route_result.semantic_query,
+                        retrieval=retrieval,
+                        retry_count=0,
+                        llm=llm_provider,
+                        kb_id=kb_id,
+                    )
+                    if crag_result.action == "error":
+                        fallback_note = "The retrieval service is temporarily unavailable. Please try again later."
+                        retrieval = None
+                    elif crag_result.action == "not_found":
+                        fallback_note = "No relevant information found in the knowledge base for this topic."
+                        retrieval = None
+                    else:
+                        retrieval = RetrievalQueryResponse(query=content, results=crag_result.chunks)
+
+            # ── 4. Build context + messages ──
             context = _build_context(retrieval)
-            history: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in session.messages]
 
             if context:
                 system_prompt = RAG_SYSTEM_PROMPT
                 user_message = f"Context:\n{context}\n\nQuestion: {content}"
+            elif fallback_note:
+                system_prompt = FALLBACK_SYSTEM_PROMPT
+                user_message = f"Retrieval status: {fallback_note}\n\nQuestion: {content}"
             else:
                 system_prompt = CHAT_SYSTEM_PROMPT
                 user_message = content
 
             messages = [*history, {"role": "user", "content": user_message}]
 
-            # 4. LLM generation (auto-traced via langfuse.openai)
+            # ── 5. LLM generation (auto-traced via langfuse.openai) ──
             answer = llm_provider.generate(system_prompt=system_prompt, messages=messages)
 
-            # 5. Persist
+            # ── 6. Persist ──
             citations = _build_citations(retrieval)
             persisted = True
             ai_msg_id = ""
@@ -149,7 +212,12 @@ class ChatService:
 
             # Set trace output with a concise summary
             update_current_span(
-                output={"answer_length": len(answer), "persisted": persisted, "citations_count": len(citations)},
+                output={
+                    "answer_length": len(answer),
+                    "persisted": persisted,
+                    "citations_count": len(citations),
+                    "search_mode": effective_mode,
+                },
             )
 
             return ChatResponse(
@@ -161,7 +229,7 @@ class ChatService:
             )
 
     @staticmethod
-    @observe(name="chat.message.stream", capture_input=False, capture_output=False)
+    @observe(name="chat.message.stream", as_type="chain", capture_input=False, capture_output=False)
     async def stream_message(
         db: Session,
         *,
@@ -170,27 +238,28 @@ class ChatService:
         session_id: str | None,
         content: str,
         reference_document_ids: list[str] | None = None,
-        search_strategy: str = "agentic",
+        search_mode: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream chat response as SSE JSON event strings.
 
         LLM generation is auto-traced by ``langfuse.openai`` integration.
         """
-        doc_ids = reference_document_ids
-
         update_current_span(
-            input={"query": content, "kb_id": kb_id, "strategy": search_strategy},
+            input={"query": content, "kb_id": kb_id, "mode": search_mode},
+            metadata={"search_mode": search_mode},
         )
 
         # ── 1. Resolve session (outside trace_context so new sessions get real IDs) ──
         try:
             if session_id is None:
-                session = SessionService.create(db, kb_id=kb_id, user_id=user_id, reference_document_ids=doc_ids)
+                session = SessionService.create(
+                    db, kb_id=kb_id, user_id=user_id, reference_document_ids=reference_document_ids
+                )
                 session_id = session.id
             else:
                 session = SessionService.get_by_id(db, session_id=session_id, kb_id=kb_id, user_id=user_id)
-                if reference_document_ids is None:
-                    doc_ids = session.reference_document_ids
+
+            doc_ids = session.reference_document_ids
         except AppError as e:
             logger.warning("session lookup failed", session_id=session_id, error=str(e))
             yield json.dumps({"type": "error", "message": e.message})
@@ -230,36 +299,84 @@ class ChatService:
                     }
                 )
 
-                # ── 3. Retrieve (auto-traced via @observe on RetrievalService.search) ──
+                # ── 0. Route & Rewrite ──
+                route_result = route_and_rewrite(llm_provider, content, history=history)
+
+                # Validate search_mode override
+                if search_mode is not None and search_mode not in ("direct", "agentic"):
+                    raise ValidationError(
+                        code=ResponseCode.SEARCH_STRATEGY_UNKNOWN,
+                        message=f"Unknown search mode: '{search_mode}'. Available: ['direct', 'agentic']",
+                    )
+
+                # Determine effective mode — explicit user choice overrides LLM routing
+                effective_mode = search_mode if search_mode is not None else route_result.mode.value
+
+                # ── 3. Retrieve ──
+                retrieval: RetrievalQueryResponse | None = None
+                fallback_note: str | None = None
+
                 if doc_ids is not None and len(doc_ids) == 0:
-                    retrieval = None
-                else:
+                    fallback_note = "No documents selected in the knowledge base. Select documents before asking."
+                elif effective_mode == "agentic":
                     retrieval = RetrievalService.search(
                         db,
-                        query=content,
+                        query=route_result.semantic_query,
                         knowledge_base_id=kb_id,
                         top_k=10,
                         document_ids=doc_ids,
-                        strategy=search_strategy,
+                        mode="agentic",
+                    )
+                else:
+                    retrieval = RetrievalService.search(
+                        db,
+                        query=route_result.semantic_query,
+                        knowledge_base_id=kb_id,
+                        top_k=10,
+                        document_ids=doc_ids,
+                        mode="direct",
+                        lexical_queries=route_result.lexical_queries,
                     )
 
                 if retrieval and retrieval.agent_steps:
                     for step in retrieval.agent_steps:
                         yield json.dumps(step)
 
+                # ── 4. CRAG gate (direct mode only) ──
+                if retrieval and effective_mode != "agentic":
+                    crag_result = crag_evaluate_and_act(
+                        db,
+                        query=route_result.semantic_query,
+                        retrieval=retrieval,
+                        retry_count=0,
+                        llm=llm_provider,
+                        kb_id=kb_id,
+                    )
+                    if crag_result.action == "error":
+                        fallback_note = "The retrieval service is temporarily unavailable. Please try again later."
+                        retrieval = None
+                    elif crag_result.action == "not_found":
+                        fallback_note = "No relevant information found in the knowledge base for this topic."
+                        retrieval = None
+                    else:
+                        retrieval = RetrievalQueryResponse(query=content, results=crag_result.chunks)
+
                 context = _build_context(retrieval)
 
-                # ── 4. Build messages ──
+                # ── 5. Build messages ──
                 if context:
                     system_prompt = RAG_SYSTEM_PROMPT
                     user_message = f"Context:\n{context}\n\nQuestion: {content}"
+                elif fallback_note:
+                    system_prompt = FALLBACK_SYSTEM_PROMPT
+                    user_message = f"Retrieval status: {fallback_note}\n\nQuestion: {content}"
                 else:
                     system_prompt = CHAT_SYSTEM_PROMPT
                     user_message = content
 
                 messages = [*history, {"role": "user", "content": user_message}]
 
-                # ── 5. Stream LLM (auto-traced via langfuse.openai) ──
+                # ── 6. Stream LLM (auto-traced via langfuse.openai) ──
                 full_answer = ""
                 async_provider = get_async_provider()
 
@@ -267,11 +384,11 @@ class ChatService:
                     full_answer += token
                     yield json.dumps({"type": "token", "text": token})
 
-                # ── 6. Citations ──
+                # ── 7. Citations ──
                 citations = _build_citations(retrieval)
                 yield json.dumps({"type": "citation", "citations": citations})
 
-                # ── 7. Persist AI message ──
+                # ── 8. Persist AI message ──
                 persisted = True
                 ai_msg_id = ""
                 try:
@@ -295,6 +412,7 @@ class ChatService:
                         "answer_length": len(full_answer),
                         "persisted": persisted,
                         "citations_count": len(citations),
+                        "search_mode": effective_mode,
                     },
                 )
 

@@ -25,7 +25,7 @@ def send_message(
         session_id=payload.session_id,
         content=payload.content,
         reference_document_ids=payload.reference_document_ids,
-        search_strategy=payload.search_strategy,
+        search_mode=payload.search_mode,
     )
     return ApiResponse[ChatResponse](code=ResponseCode.OK, message="success", data=result)
 
@@ -62,7 +62,7 @@ async def send_message_stream(
             session_id=payload.session_id,
             content=payload.content,
             reference_document_ids=payload.reference_document_ids,
-            search_strategy=payload.search_strategy,
+            search_mode=payload.search_mode,
         ):
             yield f"data: {event_json}\n\n"
 
