@@ -1,7 +1,7 @@
 [project]
-name = "knowledgebase-api"
+name = "knowledge-studio-api"
 version = "0.1.0"
-description = "KnowledgeBase API — knowledge retrieval and AI analysis"
+description = "Knowledge Studio API — knowledge retrieval and AI analysis"
 requires-python = ">=3.12"
 
 [tool.ruff]

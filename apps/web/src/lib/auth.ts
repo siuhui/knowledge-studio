@@ -1,6 +1,6 @@
 "use client";
 
-const TOKEN_KEY = "kb_access_token";
+const TOKEN_KEY = "ks_access_token";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;

@@ -84,6 +84,20 @@ class ObjectStorageService:
     """Static methods for MinIO/S3 operations. Lazy client init."""
 
     @staticmethod
+    def ensure_bucket() -> None:
+        """Create the configured bucket if it doesn't exist. Idempotent."""
+        client = _get_client()
+        bucket = settings.object_storage.bucket
+        try:
+            client.head_bucket(Bucket=bucket)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                client.create_bucket(Bucket=bucket)
+                logger.info("bucket created", bucket=bucket)
+            else:
+                raise
+
+    @staticmethod
     def generate_presigned_post(
         *, key: str, content_type: str | None = None, max_size_bytes: int | None = None
     ) -> tuple[str, dict[str, str]]:

@@ -33,7 +33,7 @@ class Chunk(Base):
     # Reserved for parser-specific data (currently empty).
     chunk_metadata: Mapped[dict[str, object]] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
-    # Dimension comes from KB_EMBEDDING__DIMENSION config.  If you change the
+    # Dimension comes from KS_EMBEDDING__DIMENSION config.  If you change the
     # embedding model / dimension after table creation, you must migrate the
     # pgvector column (Alembic) or recreate the table (dev auto_create_tables).
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding.dimension), nullable=True)

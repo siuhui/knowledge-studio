@@ -298,7 +298,7 @@ class AnthropicProvider:
     ) -> ToolCallDecision:
         raise NotImplementedError(
             "Anthropic tool calling is not yet supported for agent mode. "
-            "Use an OpenAI-compatible provider (set KB_LLM__PROVIDER=openai)."
+            "Use an OpenAI-compatible provider (set KS_LLM__PROVIDER=openai)."
         )
 
     async def generate_stream(self, *, system_prompt: str, messages: list[dict[str, str]]) -> AsyncGenerator[str, None]:

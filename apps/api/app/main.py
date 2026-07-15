@@ -14,6 +14,7 @@ from app.core.logging import setup_logging
 from app.core.telemetry import init_telemetry, shutdown_telemetry
 from app.core.trace import RequestIdMiddleware
 from app.database import Base, engine
+from app.services.object_storage import ObjectStorageService
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +35,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             conn.commit()
         Base.metadata.create_all(bind=engine)
         logger.info("tables created", auto_create_tables=True)
+
+    if settings.auto_create_bucket:
+        ObjectStorageService.ensure_bucket()
 
     yield
 

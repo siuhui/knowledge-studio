@@ -1,71 +1,89 @@
-# KnowledgeBase
+# Knowledge Studio (WIP)
 
-本地知识检索与 AI 分析工具。把文档丢进去，能搜、能问、能深度分析。
+Ingest, ask, generate — all powered by AI.
 
-**v0.1.0** — 注册/登录 → 创建 KnowledgeBase → 上传文件 → 索引 → 检索 → 带引用回答。
+## Features
 
-## 文档
+- **Ingest** — Upload PDF, Markdown, plain text, or import from URLs. Content is automatically parsed, chunked, and indexed for search.
+- **Ask** — Ask questions in natural language and get answers with source citations. Supports multi-turn conversation with streaming output.
+- **Generate** — Produce structured multi-chapter reports from the content in your knowledge base.
+- **Observe** — Built-in tracing across every LLM call and retrieval step.
 
-- [PRD](docs/prd.md)
-- [数据模型](docs/data-model.md)
-- [工程规范](docs/engineering-standards.md)
+## Quick Start
 
-## 技术栈
+**Prerequisites:** Docker & Docker Compose, an OpenAI-compatible API key.
 
-Python + FastAPI + SQLAlchemy · PostgreSQL 16 + pgvector · MinIO · Next.js 15 · OpenAI API
+```bash
+git clone https://github.com/siuhui/knowledge-studio.git
+cd knowledge-studio
 
-## 运行
+cp apps/api/.env.example apps/api/.env
+# Edit .env: fill in KS_LLM__API_KEY and KS_EMBEDDING__API_KEY
 
-### Docker Compose
+docker compose -f infra/docker-compose.yml up -d
+```
+
+Open [http://localhost:3000](http://localhost:3000), register an account, create a knowledge base, and upload your first document.
+
+| Service | URL |
+|---------|-----|
+| Web UI | http://localhost:3000 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| MinIO console | http://localhost:9001 (minioadmin / minioadmin) |
+
+## Development
+
+Two ways to run in development
+
+### Docker Compose (hot reload)
+
+Full stack with live reload for both API and frontend. Database and MinIO data are bind-mounted to `infra/data/` so they survive container teardown.
 
 ```bash
 cp apps/api/.env.example apps/api/.env
-# 编辑 .env: 改 KB_LLM__API_KEY，localhost → db/minio
-```
-
-**标准模式**：
-```bash
-docker compose -f infra/docker-compose.yml up -d
-# http://localhost:8000  |  Swagger: /docs  |  MinIO: :9001  |  Web: :3000
-```
-
-**开发模式**（叠加热重载 + 前端 HMR）：
-
-```bash
 docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d
 ```
 
-### 本地开发
+### Local (manual)
 
-#### 依赖服务
+Run only infrastructure in Docker, start backend and frontend manually for the fastest feedback loop.
 
-方式一 — Docker 快速启动：
-
-```bash
-docker compose -f infra/docker-compose.yml up -d db minio minio-init
-```
-
-方式二 — 自行安装运行，确保 PostgreSQL 已启用 pgvector 扩展。
-
-#### 后端
+**Requirements:** Python 3.12+, pnpm (for Node.js 20+).
 
 ```bash
+docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up -d db minio
+
+# Backend
 cd apps/api
-cp .env.example .env    # 编辑 .env 改密钥，host 保持 localhost
+cp .env.example .env
 python -m venv .venv
-
-# 激活虚拟环境（选一个）：
-.venv\Scripts\Activate.ps1       # Windows PowerShell
-source .venv/Scripts/activate    # Windows Git Bash
-source .venv/bin/activate        # macOS / Linux
-
+source .venv/Scripts/activate   # Windows Git Bash (Linux/macOS: .venv/bin/activate)
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
-```
 
-#### 前端
-
-```bash
+# Frontend (separate terminal)
 cd apps/web
-pnpm install && pnpm dev        # http://localhost:3000
+pnpm install && pnpm dev
 ```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | Python 3.12, FastAPI, SQLAlchemy |
+| Database | PostgreSQL 16 + pgvector |
+| Storage | MinIO (S3-compatible) |
+| Frontend | Next.js 15, React 19, Tailwind CSS v4 |
+| AI | OpenAI-compatible API, Anthropic |
+| Telemetry | Langfuse (OpenTelemetry) |
+
+## Documentation
+
+- [Product Requirements](docs/prd.md)
+- [Architecture & Design](docs/architecture.md)
+- [Data Model](docs/data-model.md)
+- [Engineering Standards](docs/engineering-standards.md)
+
+## License
+
+MIT

@@ -52,7 +52,7 @@ class LLMConfig(BaseSettings):
 class TelemetryConfig(BaseSettings):
     """OpenTelemetry + Langfuse Cloud observability (v4 SDK).
 
-    Set KB_TELEMETRY__ENABLED=false to disable all tracing (e.g. in tests).
+    Set KS_TELEMETRY__ENABLED=false to disable all tracing (e.g. in tests).
     Keys must be provided via env vars — no defaults for SecretStr fields.
     """
 
@@ -78,7 +78,7 @@ class IngestionConfig(BaseSettings):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="KB_",
+        env_prefix="KS_",
         env_nested_delimiter="__",
         # Absolute paths so env_file works regardless of CWD
         env_file=(
@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     cors_origins: list[str]
 
     auto_create_tables: bool = False
+    auto_create_bucket: bool = False
 
     @field_validator("env")
     @classmethod

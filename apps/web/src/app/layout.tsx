@@ -5,8 +5,8 @@ import { Navbar } from "@/components/layout/Navbar";
 import "@/styles/globals.css";
 
 export const metadata: Metadata = {
-  title: "KnowledgeBase",
-  description: "Local knowledge retrieval and AI analysis",
+  title: "Knowledge Studio",
+  description: "Turn your documents into an AI-powered knowledge workspace",
 };
 
 export default function RootLayout({

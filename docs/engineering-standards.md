@@ -90,14 +90,13 @@ knowledge-base/
 │   │   │   │   │   └── parser.py      #     PARSERS 注册表（PDF/MD/TXT）
 │   │   │   │   └── retrieval/         #   检索服务
 │   │   │   │       ├── __init__.py
-│   │   │   │       ├── service.py     #     RetrievalService（策略分发器）
+│   │   │   │       ├── service.py     #     RetrievalService（内联分发 direct/agentic）
 │   │   │   │       ├── retriever.py   #     hybrid_search（向量 + 关键词 + RRF）
 │   │   │   │       ├── reranker.py    #     identity pass（v0.1.0）
 │   │   │   │       ├── citation_builder.py
-│   │   │   │       └── strategies/    #   检索策略实现
-│   │   │   │           ├── __init__.py  #   SearchStrategy Protocol + STRATEGIES registry
-│   │   │   │           ├── agentic.py   #   AgenticSearchStrategy（默认）
-│   │   │   │           └── hybrid.py    #   HybridSearchStrategy
+│   │   │   │       ├── crag.py
+│   │   │   │       ├── query_rewriter.py
+│   │   │   │       └── rewrite.py
 │   │   │   └── api/                   #   路由（薄层）
 │   │   │       ├── __init__.py
 │   │   │       ├── health.py
@@ -236,7 +235,7 @@ DELETE /api/v1/knowledge-bases/{kb_id}/sessions/{id}          删除会话
 
 | 阶段 | 方式 | 说明 |
 |------|------|------|
-| v0.x（开发） | `Base.metadata.create_all()` + 手动删表 | 无生产数据，schema 变更直接改 Model 文件，删库重建即可。**不需要 Alembic 迁移、不需要兼容旧数据。** 配置开关 `KB_AUTO_CREATE_TABLES=true` |
+| v0.x（开发） | `Base.metadata.create_all()` + 手动删表 | 无生产数据，schema 变更直接改 Model 文件，删库重建即可。**不需要 Alembic 迁移、不需要兼容旧数据。** 配置开关 `KS_AUTO_CREATE_TABLES=true` |
 | v1.0（上线） | Alembic | Schema 稳定、有真实数据后引入迁移管理 |
 
 启动时由 `main.py` lifespan 控制：
@@ -425,11 +424,11 @@ def _direct_search(db, ...):
 #### 规则
 
 - **导入路径**：`from app.config import settings`，模块级单例，全项目直接引用
-- **环境变量前缀**：`KB_`，嵌套字段用 `__` 展开（如 `KB_DATABASE__URL` → `settings.database.url`）
+- **环境变量前缀**：`KS_`，嵌套字段用 `__` 展开（如 `KS_DATABASE__URL` → `settings.database.url`）
 - **配置分组**：按领域拆嵌套类（`DatabaseConfig` / `JWTConfig` / `LLMConfig` / `EmbeddingConfig` / `ObjectStorageConfig` / `TelemetryConfig`），不在平铺类堆字段
 - **无默认值**：必填字段声明时不带 `=`，缺失则启动时报错；基础设施类字段（如 `auto_create_tables`）是例外
 - **敏感字段**：用 `pydantic.SecretStr`，取值需调用 `.get_secret_value()`
-- **环境隔离**：通过 `KB_ENV` 字段区分（`dev` / `test` / `prod`），启动时 `@field_validator` 校验
+- **环境隔离**：通过 `KS_ENV` 字段区分（`dev` / `test` / `prod`），启动时 `@field_validator` 校验
 - **加载优先级**：`.env.example`（模板）→ `.env`（本地）→ `.env.local`（敏感覆盖）→ 进程环境变量（Docker）
 - **.env.example 提交**，`.env` 和 `.env.local` gitignore
 
@@ -788,29 +787,29 @@ for await (const event of parseSSEStream(stream)) {
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `KB_ENV` | `dev` | 环境 |
-| `KB_DATABASE__URL` | `postgresql://postgres:postgres@localhost:5432/knowledgebase` | 数据库连接 |
-| `KB_DATABASE__PG_VECTOR_EXTENSION` | `vector` | pgvector 扩展名 |
-| `KB_LLM__PROVIDER` | `openai` | LLM 服务商（`openai` / `anthropic`） |
-| `KB_LLM__API_KEY` | — | API 密钥（必填） |
-| `KB_LLM__BASE_URL` | — | API 代理地址（可选） |
-| `KB_LLM__CHAT_MODEL` | `gpt-4o-mini` | 对话模型 |
-| `KB_EMBEDDING__API_KEY` | — | Embedding API 密钥 |
-| `KB_EMBEDDING__BASE_URL` | — | Embedding API 代理地址（可选） |
-| `KB_EMBEDDING__MODEL` | `text-embedding-v4` | Embedding 模型 |
-| `KB_EMBEDDING__DIMENSION` | `1024` | 向量维度（需与 pgvector 一致） |
-| `KB_JWT__SECRET` | `dev-secret-change-me` | JWT 签名密钥 |
-| `KB_JWT__EXPIRY_MINUTES` | `1440` | Token 有效期（默认 24h） |
-| `KB_OBJECT_STORAGE__ENDPOINT` | — | MinIO/S3 endpoint |
-| `KB_OBJECT_STORAGE__ACCESS_KEY` | — | Access key |
-| `KB_OBJECT_STORAGE__SECRET_KEY` | — | Secret key |
-| `KB_OBJECT_STORAGE__BUCKET` | — | Bucket 名称 |
-| `KB_OBJECT_STORAGE__REGION` | — | Region |
-| `KB_TELEMETRY__ENABLED` | `false` | 启用 Langfuse 追踪 |
-| `KB_TELEMETRY__LANGFUSE_SECRET_KEY` | — | Langfuse secret key |
-| `KB_TELEMETRY__LANGFUSE_PUBLIC_KEY` | — | Langfuse public key |
-| `KB_TELEMETRY__LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse 地址 |
-| `KB_CORS_ORIGINS` | `["http://localhost:3000"]` | 跨域白名单 |
+| `KS_ENV` | `dev` | 环境 |
+| `KS_DATABASE__URL` | `postgresql://postgres:postgres@localhost:5432/knowledge_studio` | 数据库连接 |
+| `KS_DATABASE__PG_VECTOR_EXTENSION` | `vector` | pgvector 扩展名 |
+| `KS_LLM__PROVIDER` | `openai` | LLM 服务商（`openai` / `anthropic`） |
+| `KS_LLM__API_KEY` | — | API 密钥（必填） |
+| `KS_LLM__BASE_URL` | — | API 代理地址（可选） |
+| `KS_LLM__CHAT_MODEL` | `gpt-4o-mini` | 对话模型 |
+| `KS_EMBEDDING__API_KEY` | — | Embedding API 密钥 |
+| `KS_EMBEDDING__BASE_URL` | — | Embedding API 代理地址（可选） |
+| `KS_EMBEDDING__MODEL` | `text-embedding-v4` | Embedding 模型 |
+| `KS_EMBEDDING__DIMENSION` | `1024` | 向量维度（需与 pgvector 一致） |
+| `KS_JWT__SECRET` | `dev-secret-change-me` | JWT 签名密钥 |
+| `KS_JWT__EXPIRY_MINUTES` | `1440` | Token 有效期（默认 24h） |
+| `KS_OBJECT_STORAGE__ENDPOINT` | — | MinIO/S3 endpoint |
+| `KS_OBJECT_STORAGE__ACCESS_KEY` | — | Access key |
+| `KS_OBJECT_STORAGE__SECRET_KEY` | — | Secret key |
+| `KS_OBJECT_STORAGE__BUCKET` | — | Bucket 名称 |
+| `KS_OBJECT_STORAGE__REGION` | — | Region |
+| `KS_TELEMETRY__ENABLED` | `false` | 启用 Langfuse 追踪 |
+| `KS_TELEMETRY__LANGFUSE_SECRET_KEY` | — | Langfuse secret key |
+| `KS_TELEMETRY__LANGFUSE_PUBLIC_KEY` | — | Langfuse public key |
+| `KS_TELEMETRY__LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse 地址 |
+| `KS_CORS_ORIGINS` | `["http://localhost:3000"]` | 跨域白名单 |
 
 前端（`apps/web/`）：
 

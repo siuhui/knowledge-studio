@@ -17,7 +17,7 @@ export function Navbar() {
     <nav className="sticky top-0 z-40 h-12 bg-[#FBFBFA]/80 backdrop-blur-sm border-b border-gray-200/60">
       <div className="flex items-center justify-between h-12 px-6">
         <Link href="/" className="font-semibold text-sm tracking-tight text-[#1A1A1A]">
-          KnowledgeBase
+          Knowledge Studio
         </Link>
         <div className="flex items-center gap-4">
           {isLoading ? null : user ? (

@@ -35,7 +35,7 @@ function dispatchUnauthorized(status: number, skipUnauthorizedHandler = false): 
 
 function getAuthHeader(): Record<string, string> {
   if (typeof window === "undefined") return {};
-  const token = localStorage.getItem("kb_access_token");
+  const token = localStorage.getItem("ks_access_token");
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
@@ -303,7 +303,7 @@ export async function deleteStudioTask(kbId: string, taskId: string): Promise<vo
 
 export async function downloadStudioReport(kbId: string, taskId: string): Promise<string> {
   const requestId = crypto.randomUUID();
-  const token = typeof window !== "undefined" ? localStorage.getItem("kb_access_token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("ks_access_token") : null;
   const res = await fetch(
     `${BASE_URL}/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}/download`,
     {
@@ -327,7 +327,7 @@ export async function downloadStudioReportFile(
   filename: string,
 ): Promise<void> {
   const requestId = crypto.randomUUID();
-  const token = typeof window !== "undefined" ? localStorage.getItem("kb_access_token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("ks_access_token") : null;
   const res = await fetch(
     `${BASE_URL}/api/v1/knowledge-bases/${kbId}/studio/tasks/${taskId}/download`,
     {

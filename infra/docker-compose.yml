@@ -2,18 +2,18 @@ services:
   # ── PostgreSQL 16 + pgvector ──
   db:
     image: pgvector/pgvector:pg16
-    container_name: kb-db
+    container_name: ks-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-knowledgebase}
+      POSTGRES_DB: ${DB_NAME:-knowledge_studio}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-knowledgebase}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-knowledge_studio}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,7 +22,7 @@ services:
   # ── MinIO (S3-compatible object storage) ──
   minio:
     image: minio/minio:latest
-    container_name: kb-minio
+    container_name: ks-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -40,28 +40,12 @@ services:
       retries: 5
       start_period: 5s
 
-  # ── MinIO bucket 初始化（一次性）──
-  minio-init:
-    image: minio/mc:latest
-    container_name: kb-minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_USER:-minioadmin} ${MINIO_PASSWORD:-minioadmin};
-      mc mb --ignore-existing local/${MINIO_BUCKET:-kb-source};
-      mc anonymous set download local/${MINIO_BUCKET:-kb-source};
-      echo 'MinIO bucket ready';
-      exit 0;
-      "
-
   # ── FastAPI 后端 ──
   api:
     build:
       context: ../apps/api
       dockerfile: Dockerfile
-    container_name: kb-api
+    container_name: ks-api
     restart: unless-stopped
     depends_on:
       db:
@@ -78,7 +62,7 @@ services:
     build:
       context: ../apps/web
       dockerfile: Dockerfile
-    container_name: kb-web
+    container_name: ks-web
     restart: unless-stopped
     depends_on:
       - api

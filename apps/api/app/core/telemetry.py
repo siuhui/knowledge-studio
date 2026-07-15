@@ -1,6 +1,6 @@
 """Langfuse telemetry (v4 SDK).
 
-When ``KB_TELEMETRY__ENABLED=false`` or credentials are missing,
+When ``KS_TELEMETRY__ENABLED=false`` or credentials are missing,
 ``trace_context()`` returns ``nullcontext()``, ``update_current_span()``
 is a no-op, and ``get_current_trace_id()`` returns ``None``.
 

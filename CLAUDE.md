@@ -11,7 +11,7 @@ See @docs/architecture.md for detailed design, @docs/data-model.md for the data 
 cd apps/api
 source .venv/Scripts/activate          # Windows Git Bash（Linux/macOS: .venv/bin/activate）
 uvicorn app.main:app --reload --port 8000
-pytest                                    # all tests (needs knowledgebase_test db)
+pytest                                    # all tests (needs knowledge_studio_test db)
 pytest tests/api/test_auth.py             # single file
 ruff check . && ruff format . && mypy app/  # quality gate（mypy=strict in pyproject.toml）
 
@@ -50,7 +50,7 @@ Key modules:
 
 - **API responses**: `ApiResponse[T]` (`{code, message, data}`); `X-Request-ID` header; `PaginatedResponse[T]` with `meta`
 - **Errors**: service raises typed errors (`NotFoundError`, `ValidationError`, etc.); API never try-except; global handlers in `core/exceptions.py`
-- **Config**: pydantic-settings, `KB_` prefix, `__` nested delimiter. Nested classes: `DatabaseConfig`, `JWTConfig`, `LLMConfig`, `EmbeddingConfig`, `ObjectStorageConfig`, `TelemetryConfig`. `SecretStr` for secrets.
+- **Config**: pydantic-settings, `KS_` prefix, `__` nested delimiter. Nested classes: `DatabaseConfig`, `JWTConfig`, `LLMConfig`, `EmbeddingConfig`, `ObjectStorageConfig`, `TelemetryConfig`. `SecretStr` for secrets.
 - **DB**: snake_case singular table names; `Base.metadata.create_all()` (v0.x); Alembic at v1.x; pgvector extension auto-created
 - **File naming**: omit redundant layer suffixes — `services/auth.py` not `auth_service.py`, `repositories/user.py` not `user_repository.py` (the directory already provides context)
 - **Logging**: structlog, JSON in prod; log at service layer only; never log in repositories
@@ -60,7 +60,7 @@ Key modules:
 
 - **Anthropic `generate_with_tools()` raises `NotImplementedError`** — agent mode requires OpenAI-compatible provider
 - **Both retrieval modes depend on Chunk** — agentic uses `hybrid_search` (Chunk-level FTS + vector + RRF), direct uses `hybrid_retrieve` same pipeline
-- **embedding dimension is configurable** (`KB_EMBEDDING__DIMENSION`, default 1024), not hardcoded
+- **embedding dimension is configurable** (`KS_EMBEDDING__DIMENSION`, default 1024), not hardcoded
 - **`Document.status` ≠ indexing progress** — content lifecycle only (`pending/ready/failed`); chunk/embed state is in `DocumentIndexStatus` (1:1)
 - **`source_id` is nullable** on Document (SET NULL on source delete); **`knowledge_base_id` is not nullable** — it's the canonical KB reference, not just denormalization (required because source can be deleted)
 - **Source must be created first (pending)**, *then* upload fills it → complete activates → triggers background indexing

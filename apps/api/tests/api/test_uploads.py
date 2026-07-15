@@ -116,7 +116,7 @@ def test_complete_invalid_prefix(client: TestClient, auth_headers: dict):
     response = client.post(
         f"/api/v1/sources/{source['id']}/uploads/complete",
         json={
-            "bucket": "knowledgebase",
+            "bucket": "knowledge_studio",
             "object_key": f"uploads/{kb_id}/OTHER_SOURCE_ID/token/file.pdf",
         },
         headers=auth_headers,

@@ -535,7 +535,7 @@ class LLMProvider(Protocol):
 ### 3.8 复用关系
 
 ```
-AgentRunner(SEARCH_AGENT_CONFIG)  ──→  AgenticSearchStrategy.search()
+AgentRunner(SEARCH_AGENT_CONFIG)  ──→  RetrievalService._agentic_search()
 AgentRunner(GATHER_AGENT_CONFIG)  ──→  ReportWorkflow.gather()
 
 同一个 Runner，同一套 tools，不同 config。
@@ -556,96 +556,48 @@ AgentRunner(GATHER_AGENT_CONFIG)  ──→  ReportWorkflow.gather()
 
 ## 四、检索策略层
 
-### 4.1 策略注册表
+两种检索模式在 `RetrievalService.search()` 中通过内联分发（if/elif），不再使用独立的策略类和注册表。两种模式都返回统一的 `RetrievalQueryResponse`。
+
+### 4.1 service.py — 内联分发
 
 ```python
-# services/retrieval/strategies/__init__.py
-
-class SearchStrategy(Protocol):
-    """检索策略协议。每个策略实现 search()，返回统一的 RetrievalQueryResponse。"""
-    def search(
-        self, db: Session, *,
-        query: str, knowledge_base_id: str, top_k: int,
-        document_ids: list[str] | None,
-    ) -> RetrievalQueryResponse: ...
-
-
-STRATEGIES: dict[str, SearchStrategy] = {}
-
-def register(name: str):
-    """装饰器注册策略。"""
-    def decorator(cls):
-        STRATEGIES[name] = cls()
-        return cls
-    return decorator
-```
-
-### 4.2 service.py — 策略分发器
-
-```python
-# services/retrieval/service.py (改造后)
+# services/retrieval/service.py
 
 class RetrievalService:
-    DEFAULT_STRATEGY = "agentic"
+    DEFAULT_MODE = "direct"
 
     @staticmethod
     def search(
-        db, *, query, knowledge_base_id, top_k=10,
-        document_ids=None, strategy: str | None = None,
+        db: Session, *,
+        query: str, knowledge_base_id: str, top_k: int = 10,
+        document_ids: list[str] | None = None,
+        mode: str | None = None,
+        lexical_queries: list[str] | None = None,
     ) -> RetrievalQueryResponse:
-        strategy_name = strategy or RetrievalService.DEFAULT_STRATEGY
-        impl = STRATEGIES.get(strategy_name)
-        if impl is None:
+        mode_name = mode or RetrievalService.DEFAULT_MODE
+
+        if mode_name == "direct":
+            return RetrievalService._direct_search(db, query=query, ...)
+        elif mode_name == "agentic":
+            return RetrievalService._agentic_search(db, query=query, ...)
+        else:
             raise ValidationError(
-                f"Unknown search strategy: {strategy_name}. "
-                f"Available: {list(STRATEGIES.keys())}"
+                code=ResponseCode.SEARCH_STRATEGY_UNKNOWN,
+                message=f"Unknown search mode: '{mode_name}'. Available: ['direct', 'agentic']",
             )
-        return impl.search(
-            db, query=query, knowledge_base_id=knowledge_base_id,
-            top_k=top_k, document_ids=document_ids,
-        )
 ```
 
-### 4.3 两种策略
+### 4.2 两种模式
 
-#### AgenticSearchStrategy（默认）
+#### Direct（默认）— `_direct_search()`
 
-```python
-# services/retrieval/strategies/agentic.py
+单次 hybrid retrieval：调用 `hybrid_retrieve()`（FTS + vector + RRF on Chunk），然后 `rerank()` → `build_citations()` → 返回 `RetrievalQueryResponse`。无需 agent。
 
-@register("agentic")
-class AgenticSearchStrategy:
-    """Agent 多轮推理检索 — 通过 AgentRunner 调用 hybrid_search 工具。"""
+#### Agentic — `_agentic_search()`
 
-    def __init__(self):
-        self._agent = AgentRunner(llm_provider, SEARCH_AGENT_CONFIG)
+多轮 ReAct agent 循环：创建 `AgentRunner(SEARCH_AGENT_CONFIG)`，通过 `hybrid_search`、`read_document`、`list_documents` 三个工具执行多轮搜索推理。从 `AgentResult.collected_artifacts` 构建 `RetrievalQueryResponse`，同时将 `AgentStep` 列表转换为 `agent_steps`（SSE `agent_progress` 事件）供前端展示。
 
-    def search(self, db, *, query, knowledge_base_id, top_k, document_ids):
-        ctx = ToolContext(db=db, kb_id=knowledge_base_id)
-        result = self._agent.run(
-            task=f"Answer this question using the knowledge base:\n{query}",
-            ctx=ctx,
-        )
-        # 从 collected_artifacts 构建 RetrievalQueryResponse
-        return _artifacts_to_response(db, query=query, artifacts=result.collected_artifacts)
-```
-
-Agent 通过 `hybrid_search` 工具检索，该工具调用统一的 `hybrid_retrieve()`（FTS + vector + RRF on Chunk），与 direct 模式共享同一检索管道。
-
-#### HybridSearchStrategy（保留）
-
-```python
-# services/retrieval/strategies/hybrid.py
-
-@register("hybrid")
-class HybridSearchStrategy:
-    """现有 hybrid search — 从 service.py 搬迁，逻辑不变。"""
-
-    def search(self, db, *, query, knowledge_base_id, top_k, document_ids):
-        query_embedding = embedder.embed([query])[0]
-        chunk_scores = hybrid_search(db, query=query, query_embedding=query_embedding, ...)
-        # ... 现有逻辑不变
-```
+两种模式共享同一 `hybrid_retrieve()` + `merge_results()` 管道（agent 的 `hybrid_search` 工具内部调用它），chunk 级结果统一经过 RRF 融合。
 
 ### 4.4 接入 ChatService
 
@@ -996,8 +948,7 @@ Phase 1: Agent 运行时 ✅ 已完成
   ── 单元测试: runner 循环 / tool 执行 / 早停 (27 tests, 12/12 pass without DB)
 
 Phase 2: 检索策略层 ✅ 已完成
-  ── strategies/ (__init__.py, agentic.py, hybrid.py)
-  ── RetrievalService 改为分发器，DEFAULT_STRATEGY="agentic"
+  ── RetrievalService.search() 内联分发 direct/agentic，DEFAULT_MODE="direct"
   ── ChatRequest 加 search_strategy，ChatService 透传
   ── SSE 事件扩展（agent_progress: listing/searching/reading/analyzing/error）
   ── 前端 SSE 客户端（parseSSEStream + 工作区 agent 步骤展示）
@@ -1033,14 +984,13 @@ Phase 4: v0.2.0
 ```
 新增:
   services/agent/__init__.py, runner.py, types.py, tools.py, configs.py
-  services/retrieval/strategies/__init__.py, agentic.py, hybrid.py
   core/telemetry.py                                 # Langfuse tracing
   tests/services/test_agent_runner.py
 
 修改:
   services/llm.py               # 加 generate_with_tools, generate_stream, ToolCallDecision
   services/chat.py              # 加 stream_message, search_strategy
-  services/retrieval/service.py # 策略分发器，DEFAULT_STRATEGY="agentic"
+  services/retrieval/service.py # 内联分发，DEFAULT_MODE="direct"
   schemas/chat.py               # 加 search_strategy
   api/chat.py                   # SSE streaming 端点
   config.py                     # 加 EmbeddingConfig, TelemetryConfig

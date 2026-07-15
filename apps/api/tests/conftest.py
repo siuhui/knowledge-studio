@@ -22,7 +22,7 @@ from app.main import app  # noqa: E402
 @pytest.fixture(scope="session")
 def engine():
     """Create a test database engine using a separate test database."""
-    test_url = "postgresql://postgres:postgres@localhost:5432/knowledgebase_test"
+    test_url = "postgresql://postgres:postgres@localhost:5432/knowledge_studio_test"
     engine = create_engine(test_url)
 
     # Ensure pgvector extension

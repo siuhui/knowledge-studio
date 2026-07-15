@@ -99,7 +99,7 @@ Source `status` 反映配置有效性（S3 对象还在吗？URL 可访问吗？
 | chunk_index | int | 切片序号 |
 | content | text | 文本内容 |
 | token_count | int | token 数 |
-| embedding | vector(N) | pgvector 向量（nullable，embed 阶段写入；维度由 `KB_EMBEDDING__DIMENSION` 配置，默认 1024） |
+| embedding | vector(N) | pgvector 向量（nullable，embed 阶段写入；维度由 `KS_EMBEDDING__DIMENSION` 配置，默认 1024） |
 | index_version | str(32) | 索引版本，默认 "1" |
 | created_at | datetime | |
 
@@ -183,7 +183,7 @@ text_hash          → "解析结果变没变？"     → 决定是否重新 chu
 - 身份认证 vs 权限鉴权分离——有 User，无 Role/Team/Permission
 - `knowledge_base.user_id` 标注归属，多用户隔离靠查询过滤
 - `document.text_hash` 去重（启用），`source.source_hash` 预留（v0.2.0）
-- pgvector `vector(N)`，维度可配置（`KB_EMBEDDING__DIMENSION`），`<=>` 余弦距离
+- pgvector `vector(N)`，维度可配置（`KS_EMBEDDING__DIMENSION`），`<=>` 余弦距离
 - `DocumentIndexStatus` 1:1 解耦内容生命周期与管线执行状态
 - `ChatSession` + `ChatMessage` 管理多轮对话历史与引用
 
