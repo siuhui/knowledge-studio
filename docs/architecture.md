@@ -64,15 +64,15 @@ upload → MinIO presigned POST → /complete → background index pipeline:
 Chat: route_and_rewrite → direct (hybrid + CRAG, 单次检索) / agentic (AgentRunner multi-round, 多轮检索) → build_context → LLM answer (同步 / SSE streaming)
 ```
 
-### 1.5 当前约束（v0.1.0 Phase 2 完成后）
+### 1.5 当前约束（v0.1.0 完成态）
 
 | 项目 | 状态 |
 |------|------|
-| 信息来源 | 文件上传（PDF/MD/TXT）+ URL 导入 |
-| 检索策略 | direct 为默认（单次 hybrid + CRAG）；agentic 可选（多轮 agent）。前端 `search_mode` 字段已接入 |
+| 信息来源 | 文件上传（PDF/MD/TXT）+ URL 导入（trafilatura + Playwright 兜底，含 SSRF 防护） |
+| 检索策略 | direct（单次 hybrid + CRAG）与 agentic（多轮 agent）两种模式，由 `route_and_rewrite()` LLM 按查询复杂度**逐条自动路由**二选一，无产品层面的默认/可选之分；`ChatRequest.search_mode` 可强制覆盖 |
 | Chunk + Embed | 入库必做。两种检索模式都依赖 Chunk 表（agentic 和 direct 共用 `hybrid_retrieve`） |
-| 产出物 | 问答 + 研究报告 + PPT |
-| 用户选择 | 前端支持 `search_mode` 切换（`direct` / `agentic`） |
+| 产出物 | 问答 + 研究报告（Studio Report，markdown）。PPT 未做（见 §五） |
+| 用户选择 | 后端 `search_mode` 字段可选传入覆盖路由；**前端暂无 StrategySelector UI，从不发送该字段**，实际全走 LLM 自动路由 |
 
 ---
 
@@ -93,8 +93,11 @@ v0.1.0 完成态
 
   信息来源                检索                        消费
   ───────                ────                        ────
-  upload (已有)    ┌─ agentic (NEW, 默认)      Chat 问答 (已有)
-  URL 导入 (NEW)   └─ hybrid  (已有, 可选)     Studio 报告 (NEW)
+  upload (已有)    ┌─ direct  (单次 hybrid + CRAG)   Chat 问答 (已有)
+  URL 导入 (NEW)   └─ agentic (多轮 agent, NEW)      Studio 报告 (NEW, markdown)
+
+  路由: route_and_rewrite() 每次按查询复杂度 LLM 自动二选一（无默认/可选之分）；
+        search_mode 可强制覆盖，但前端未接线，实际全走自动路由
 
   入库 pipeline (已有, 保留)
     parse → chunk → embed
@@ -105,9 +108,9 @@ v0.1.0 完成态
 | 决策 | 理由 |
 |------|------|
 | **保留现有 chunk+embed pipeline 不变** | agentic 和 direct 共用同一套 Chunk 级检索基础设施（`hybrid_retrieve` + RRF） |
-| **agentic 做可选检索策略** | 多轮 agent 循环自动搜索，适合需要多步推理的复杂问题 |
-| **hybrid 保留为可选** | 对已有 embed 的文档提供高精度语义搜索 |
-| **Studio 先做报告，再做 PPT** | 报告是最高频需求，markdown 输出验证整个 workflow，PPT 紧跟其后 |
+| **direct / agentic 由 LLM 按查询路由，无固定默认** | `route_and_rewrite()` 按复杂度选：简单问题走 direct（单次 hybrid + CRAG），需多步推理走 agentic（多轮 agent）。`search_mode` 可强制覆盖 |
+| **两条路径共享检索原语** | agentic 的 `hybrid_search` 工具内部也调 `hybrid_retrieve` + RRF，与 direct 同源 |
+| **Studio 先做报告** | 报告是最高频需求，markdown 输出验证整个 workflow；PPT 留到后续 |
 | **Agent 运行时独立于检索和 Studio** | 同一个 AgentRunner 被两者复用，`AgentRunner` 本身是业务无关的 |
 | **chunk+embed 入库必做** | 两种模式都依赖 Chunk 表，管道始终跑全流程（parse → chunk → embed） |
 
@@ -589,9 +592,11 @@ class RetrievalService:
 
 ### 4.2 两种模式
 
-#### Direct（默认）— `_direct_search()`
+#### Direct — `_direct_search()`
 
 单次 hybrid retrieval：调用 `hybrid_retrieve()`（FTS + vector + RRF on Chunk），然后 `rerank()` → `build_citations()` → 返回 `RetrievalQueryResponse`。无需 agent。
+
+> `DEFAULT_MODE = "direct"` 只是 `RetrievalService.search()` 对 `mode=None` 直接调用方的**代码级兜底**，不是产品语义上的"默认模式"。经 Chat 走的请求由 `route_and_rewrite()` 显式传入 mode，从不落到这个兜底；两种模式在产品层是 LLM 按查询复杂度**二选一**，不存在默认/可选之分。
 
 #### Agentic — `_agentic_search()`
 
@@ -659,15 +664,17 @@ Plan ──→ Gather ──→ Generate ──→ Assemble ──→ Store
 ### 5.2 目录结构
 
 ```
-services/studio/              # NEW
+services/studio/              # 已实现（report only）
   __init__.py
-  runner.py                   # StudioTaskRunner — 接收 StudioTask，执行 workflow
+  runner.py                   # execute_studio_task — 后台入口，状态/进度持久化 + MinIO 存储
+  service.py                  # StudioTask CRUD
   types.py                    # ReportConfig, ReportResult, OutputFormat
-  templates/
+  workflows/
+    base.py                   # Workflow Protocol（execute → (s3_key, chapter_count)）
     report.py                 # ReportWorkflow: plan → gather → generate → assemble → store
-    ppt.py                    # PPTWorkflow
   generators/
     markdown.py               # Markdown 拼接 + 格式化
+# PPT（ppt.py / python-pptx）尚未实现，推迟到后续版本
 ```
 
 ### 5.3 数据模型
@@ -713,7 +720,7 @@ class StudioTask(Base):
 ### 5.4 ReportWorkflow 详细流程
 
 ```python
-# services/studio/templates/report.py
+# services/studio/workflows/report.py
 
 class ReportWorkflow:
     """报告生成的 5 阶段流程。
@@ -926,10 +933,13 @@ apps/api/tests/eval/
 ### 8.4 执行频率
 
 ```
-pytest -m "not slow"               # CI 每次都跑（含 test_metrics.py 纯函数单测）
+pytest tests/unit                   # CI 阶段 1：纯单元，无需 Postgres，秒级
+pytest tests/integration            # CI 阶段 2：API + tool 执行，需 pgvector service
 python -m tests.eval.*_eval         # 手动跑 / 大改动后跑（依赖实时 Postgres + embedding API，不进 CI）
 results/ 目录存版本对比             # 追踪退化
 ```
+
+> `tests/eval/`（含 `test_metrics.py`）是手动评测工具，整体不进 CI——它测的是评测指标自身，不是被测系统。
 
 ---
 
@@ -957,28 +967,33 @@ Phase 1: Agent 运行时 ✅ 已完成
 
 Phase 2: 检索策略层 ✅ 已完成
   ── RetrievalService.search() 内联分发 direct/agentic，DEFAULT_MODE="direct"
-  ── ChatRequest 加 search_strategy，ChatService 透传
+  ── ChatRequest 加 search_mode，ChatService 透传（None 时 route_and_rewrite 自动路由）
   ── SSE 事件扩展（agent_progress: listing/searching/reading/analyzing/error）
-  ── 前端 SSE 客户端（parseSSEStream + 工作区 agent 步骤展示）
+  ── 前端 SSE 客户端（parseSSEStream callback + 工作区 agent 步骤展示）
 
-Phase 3: v0.1.0 剩余
-  ── URL 导入（新增 Source type=url，HTTP 抓取 → parse → index）
+Phase 3: v0.1.0 剩余 ✅ 已完成
+  ── URL 导入（Source type=url，trafilatura 抓取 + Playwright JS 兜底 + SSRF 防护 → parse → index）
   ── StudioTask 模型 + repository + schema
-  ── services/studio/ (runner.py, types.py, templates/report.py, generators/markdown.py, generators/pptx.py)
-  ── chunk+embed 按需触发（入库只做 parse，用户选 hybrid 时才跑）
-  ── PPT 生成（python-pptx）
-  ── Chunk: 结构化元素保护（标题、代码块、表格不跨边界切分）
+  ── services/studio/ (runner.py, service.py, types.py, workflows/report.py, generators/markdown.py)
+  ── Chunk: 结构化元素保护（代码块 offset 回映射、标题层级路径、递归分隔符链）
   ── BackgroundTasks 执行 + 前端轮询进度
   ── Studio API (create / status / download / list / delete)
-  ── Level 1 检索评测: apps/api/tests/eval/ (corpus, test_set, seed, metrics, retrieval_eval)
+  ── Level 1 检索评测: apps/api/tests/eval/ (corpus 28 篇, test_set, seed, metrics, retrieval_eval)
        方案见 @docs/retrieval-eval-plan.md
-  前端: StrategySelector + StudioPanel + TaskCard
+  前端: StudioPanel + CreateReportModal + ReportViewerModal（agent 步骤内联在工作区页面）
+
+Phase 3 未做（改期或废弃）:
+  ── ❌ PPT 生成（python-pptx）—— 改期 v0.2.0
+  ── ❌ StrategySelector 前端组件 —— 废弃：改为 LLM 自动路由，search_mode 保留为可选 override，前端暂不暴露 UI
+  ── ⊘ chunk+embed 按需触发 —— 废弃：入库始终跑全流程（决策改为「chunk+embed 入库必做」，见 §2.3）
 
 Phase 4: v0.2.0
   ── Web Search
   ── Git 仓库同步
+  ── PPT 生成（python-pptx）
   ── Level 2 回答评测: answer_eval.py (LLM-as-Judge)
   ── 评测结果汇总脚本 + CI 集成
+  ── StrategySelector 前端 UI（若需手动切换检索模式）
 ```
 
 每个 Phase 独立上线、不破坏现有功能。
@@ -989,43 +1004,40 @@ Phase 4: v0.2.0
 
 > 当前完整目录结构见 @docs/engineering-standards.md。
 
-### ✅ 已实现（Phase 1 + 2）
+### ✅ 已实现（Phase 1 + 2 + 3）
 
 ```
-新增:
-  services/agent/__init__.py, runner.py, types.py, tools.py, configs.py
-  core/telemetry.py                                 # Langfuse tracing
-  tests/services/test_agent_runner.py
-
-修改:
-  services/llm.py               # 加 generate_with_tools, generate_stream, ToolCallDecision
-  services/chat.py              # 加 stream_message, search_strategy
-  services/retrieval/service.py # 内联分发，DEFAULT_MODE="direct"
-  schemas/chat.py               # 加 search_strategy
+Phase 1 + 2 — Agent 运行时 + 检索策略层:
+  services/agent/               # runner.py, types.py, tools.py, configs.py
+  core/telemetry.py             # Langfuse tracing
+  services/llm.py               # generate_with_tools, generate_stream, ToolCallDecision
+  services/chat.py              # stream_message, search_mode 透传
+  services/retrieval/           # service.py 内联分发 DEFAULT_MODE="direct"；
+                                # retriever.py, crag.py, query_rewriter.py, rewrite.py
+  schemas/chat.py               # search_mode 字段
   api/chat.py                   # SSE streaming 端点
-  config.py                     # 加 EmbeddingConfig, TelemetryConfig
-  main.py                       # 注册 sessions router, telemetry init
+  config.py, main.py            # EmbeddingConfig, TelemetryConfig, router 注册
+
+Phase 3 — URL 导入 + Studio + 结构化分块 + 评测:
+  services/ingestion/           # parser.py (PDF/MD/TXT), extractors.py (URL: trafilatura + Playwright), service.py
+  services/indexing/pipeline.py # 结构化分块（代码块保护 + 标题层级 + 递归分隔）+ chunk/embed
+  services/studio/              # runner.py, service.py, types.py, workflows/report.py, generators/markdown.py
+  models/studio_task.py, repositories/studio_task.py, schemas/studio.py, api/studio.py
+  models/source.py              # type 枚举含 url
+  services/source.py            # URL 导入：validate_url (SSRF) → 抓取 → parse → index
+  apps/api/tests/eval/          # Level 1: corpus (28 篇), test_set, seed, metrics, retrieval_eval
+  tests/integration/api/test_studio.py, tests/unit/services/test_chunking.py, test_crag.py, test_rewrite.py, test_parser_markdown.py
+  前端: components/knowledge-bases/StudioPanel.tsx, CreateReportModal.tsx, ReportViewerModal.tsx
 ```
 
-### ⏳ 待实现（Phase 3–4）
+### ⏳ 待实现（Phase 4 / v0.2.0）
 
 ```
-新增:
-  services/studio/              # StudioTaskRunner, ReportWorkflow, generators/markdown.py, generators/pptx.py
-  models/studio_task.py
-  repositories/studio_task.py
-  schemas/studio.py
-  api/studio.py
-  tests/api/test_studio.py
-  apps/api/tests/eval/          # Level 1 (v0.1.0): corpus, test_set, seed, metrics, retrieval_eval; Level 2 answer_eval（v0.2.0）
-
-修改:
-  services/indexing/pipeline.py  # chunk+embed 按需触发，入库只做 parse
-  models/source.py              # type 枚举扩展 url，新增 url 抓取逻辑
-  services/source.py            # URL 导入：抓取 → parse → index
-
-前端:
-  components/chat/StrategySelector.tsx
+  services/studio/workflows/ppt.py   # PPT 生成（python-pptx）
+  apps/api/tests/eval/answer_eval.py # Level 2 回答评测（LLM-as-Judge）
+  Web Search / Git 仓库同步
+  components/knowledge-bases/StrategySelector.tsx  # 手动切换检索模式的前端 UI（当前为 LLM 自动路由）
+  .github/workflows/                 # CI 集成（lint + typecheck + test，已添加）
   components/studio/StudioPanel.tsx, TaskCard.tsx, TaskProgress.tsx
   hooks/useStudioTask.ts
 ```

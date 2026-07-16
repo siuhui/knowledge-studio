@@ -99,7 +99,9 @@ class TestArtifact:
             Artifact(data={"fn": lambda: None})  # type: ignore[dict-item]
 
 
-# ── Tool tests (with mock DB) ────────────────────────────────────────────────
+# ── Tool protocol tests (no DB — structure only) ─────────────────────────────
+# Tests that actually execute tools against the DB live in
+# tests/integration/services/test_agent_tools.py
 
 
 class TestTools:
@@ -121,40 +123,25 @@ class TestTools:
         assert list_documents.name == "list_documents"
         assert callable(list_documents.execute)
 
-    def test_list_documents_executes(self, db):
-        """list_documents should return ToolResult with correct structure."""
-        ctx = ToolContext(db=db, kb_id="kb-test")
-        result = list_documents.execute(ctx)
-        assert isinstance(result, ToolResult)
-        assert isinstance(result.summary, str)
-        assert "document_count" in result.metadata
-
-    def test_read_document_not_found(self, db):
-        """read_document should handle missing documents gracefully."""
-        ctx = ToolContext(db=db, kb_id="kb-test")
-        result = read_document.execute(ctx, document_id="nonexistent-id")
-        assert result.artifact_count == 0
-        assert "not found" in result.summary.lower()
-
 
 # ── AgentRunner tests ────────────────────────────────────────────────────────
 
 
 class TestAgentRunnerLoop:
-    def test_final_answer_on_first_round(self, db):
+    def test_final_answer_on_first_round(self):
         """LLM returns final answer immediately — single round, no tools."""
         llm = _make_mock_llm([_make_final_decision("The answer is 42.")])
         config = AgentConfig(tools=[], system_prompt="You are helpful.", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("What is the answer?", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("What is the answer?", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         assert isinstance(result, AgentResult)
         assert result.final_answer == "The answer is 42."
         assert result.total_tool_calls == 0
         assert len(result.steps) == 2  # thought + final
 
-    def test_tool_call_then_final(self, db):
+    def test_tool_call_then_final(self):
         """Agent calls a tool, gets result, then answers."""
         mock_tool = MagicMock()
         mock_tool.name = "lookup"
@@ -176,14 +163,14 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="You are helpful.", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("What is the capital of France?", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("What is the capital of France?", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         assert result.final_answer == "The capital of France is Paris."
         assert result.total_tool_calls == 1
         assert len(result.collected_artifacts) == 1
         assert result.collected_artifacts[0].data == {"fact": "Paris"}
 
-    def test_multiple_tool_calls(self, db):
+    def test_multiple_tool_calls(self):
         """Agent calls multiple tools across rounds before answering."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -213,13 +200,13 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="Search well.", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Find info.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Find info.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         assert result.total_tool_calls == 2
         assert len(result.collected_artifacts) == 2
         assert result.final_answer == "Combined answer from A and B."
 
-    def test_early_stop(self, db):
+    def test_early_stop(self):
         """Consecutive dry rounds should trigger early termination."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -248,13 +235,13 @@ class TestAgentRunnerLoop:
         )
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Find stuff.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Find stuff.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Should stop after 2 dry rounds (early_stop_patience=2)
         assert result.total_tool_calls == 2
         assert result.final_answer is None  # No final answer emitted
 
-    def test_early_stop_resets_on_info(self, db):
+    def test_early_stop_resets_on_info(self):
         """A round with results should reset the dry-round counter."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -286,12 +273,12 @@ class TestAgentRunnerLoop:
         )
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Find.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Find.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Round 1 had results → counter reset. Rounds 2+3 dry → stop after 3.
         assert result.total_tool_calls == 3
 
-    def test_max_rounds_limit(self, db):
+    def test_max_rounds_limit(self):
         """Agent should stop when max_rounds is reached."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -310,11 +297,11 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="Search.", max_rounds=3, early_stop_patience=10)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Search.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Search.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         assert result.total_tool_calls == 3  # capped at max_rounds
 
-    def test_tool_execution_error(self, db):
+    def test_tool_execution_error(self):
         """Tool that raises should produce error ToolResult, not crash."""
         mock_tool = MagicMock()
         mock_tool.name = "broken"
@@ -332,13 +319,13 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="test", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Test.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Test.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Tool error should be caught, produce error ToolResult, and continue
         assert result.total_tool_calls == 1
         assert "failed" in result.steps[2].tool_result.summary.lower()  # type: ignore[union-attr]
 
-    def test_llm_call_error(self, db):
+    def test_llm_call_error(self):
         """LLM failure should emit error and stop."""
         mock = MagicMock()
         mock.generate_with_tools.side_effect = RuntimeError("API down")
@@ -346,13 +333,13 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[], system_prompt="test", max_rounds=5)
         runner = AgentRunner(mock, config)
 
-        result = runner.run("Test.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Test.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Should stop after the error
         assert result.final_answer is None
         assert len(result.steps) > 0  # At least the error step
 
-    def test_no_tool_name_no_final_answer(self, db):
+    def test_no_tool_name_no_final_answer(self):
         """LLM returns neither final answer nor tool name → error."""
         decision = ToolCallDecision(
             is_final=False,
@@ -366,13 +353,13 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[], system_prompt="test", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Test.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Test.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Should emit error and stop
         error_steps = [s for s in result.steps if s.tool_result is None and not s.is_final]
         assert len(error_steps) > 0
 
-    def test_collected_artifacts_aggregation(self, db):
+    def test_collected_artifacts_aggregation(self):
         """All tool artifacts should be collected in AgentResult."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -405,12 +392,12 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="test", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Test.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Test.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         assert len(result.collected_artifacts) == 3
         assert {a.data["id"] for a in result.collected_artifacts} == {"a", "b", "c"}
 
-    def test_step_trace_completeness(self, db):
+    def test_step_trace_completeness(self):
         """Each step should have the correct is_final flag and new_info_count."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -432,7 +419,7 @@ class TestAgentRunnerLoop:
         config = AgentConfig(tools=[mock_tool], system_prompt="test", max_rounds=5)
         runner = AgentRunner(llm, config)
 
-        result = runner.run("Test.", ToolContext(db=db, kb_id="kb-1"))
+        result = runner.run("Test.", ToolContext(db=MagicMock(), kb_id="kb-1"))
 
         # Steps: thought(not final) → tool_call → tool_result(not final) → thought(final) → final
         non_final = [s for s in result.steps if not s.is_final]
@@ -491,7 +478,7 @@ class TestToolSpecConversion:
 
 class TestAgentRunnerStream:
     @pytest.mark.anyio
-    async def test_stream_yields_sse_json(self, db):
+    async def test_stream_yields_sse_json(self):
         """run_stream should yield valid SSE JSON event strings."""
         mock_tool = MagicMock()
         mock_tool.name = "search"
@@ -514,7 +501,7 @@ class TestAgentRunnerStream:
         runner = AgentRunner(llm, config)
 
         events: list[dict] = []
-        async for event_json in runner.run_stream("Test.", ToolContext(db=db, kb_id="kb-1")):
+        async for event_json in runner.run_stream("Test.", ToolContext(db=MagicMock(), kb_id="kb-1")):
             events.append(json.loads(event_json))
 
         # Should have: thought → tool_call → tool_result → thought → final
@@ -534,7 +521,7 @@ class TestAgentRunnerStream:
         assert tool_call_event["args"] == {"query": "test"}
 
     @pytest.mark.anyio
-    async def test_stream_error_event(self, db):
+    async def test_stream_error_event(self):
         """LLM error should yield an error SSE event."""
         mock = MagicMock()
         mock.generate_with_tools.side_effect = RuntimeError("Boom!")
@@ -543,7 +530,7 @@ class TestAgentRunnerStream:
         runner = AgentRunner(mock, config)
 
         events: list[dict] = []
-        async for event_json in runner.run_stream("Test.", ToolContext(db=db, kb_id="kb-1")):
+        async for event_json in runner.run_stream("Test.", ToolContext(db=MagicMock(), kb_id="kb-1")):
             events.append(json.loads(event_json))
 
         error_events = [e for e in events if e["type"] == "error"]

@@ -4,9 +4,14 @@ from pathlib import Path
 # (database URL, API keys, etc.). load_dotenv + override=True ensures
 # os.environ has every field, so the dev .env (still read by Settings as
 # env_file) cannot leak any value through.
+#
+# This lives under tests/integration/ on purpose: only integration tests need
+# a real DB + the FastAPI app. Unit tests (tests/unit/) import app.services.*
+# directly, which instantiates the Settings singleton from the absolute-path
+# .env / injected env vars — they never load this conftest.
 from dotenv import load_dotenv
 
-_test_file = Path(__file__).resolve().parent.parent / ".env.test"
+_test_file = Path(__file__).resolve().parents[2] / ".env.test"
 if _test_file.exists():
     load_dotenv(_test_file, override=True)
 

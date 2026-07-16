@@ -11,8 +11,9 @@ See @docs/architecture.md for detailed design, @docs/data-model.md for the data 
 cd apps/api
 source .venv/Scripts/activate          # Windows Git Bash（Linux/macOS: .venv/bin/activate）
 uvicorn app.main:app --reload --port 8000
-pytest                                    # all tests (needs knowledge_studio_test db)
-pytest tests/api/test_auth.py             # single file
+pytest tests/unit                         # unit only — no DB, ~0.5s
+pytest tests/integration                  # integration — needs knowledge_studio_test db
+pytest tests/integration/api/test_auth.py # single file
 ruff check . && ruff format . && mypy app/  # quality gate（mypy=strict in pyproject.toml）
 
 # Frontend
@@ -30,27 +31,31 @@ models/  → ORM only, no logic
 core/    → cross-cutting: config, errors, security, logging, trace, telemetry
 
 User ──1:N──> KnowledgeBase ──1:N──> Source ──1:N──> Document ──1:N──> Chunk
-                                            │                      │
-                                     ChatSession ──1:N──> ChatMessage
-Document ──1:1──> DocumentIndexStatus
+              │                                                    │
+              ├─1:N──> ChatSession ──1:N──> ChatMessage            │
+              └─1:N──> StudioTask                    Document ──1:1─┴─> DocumentIndexStatus
 
-RAG: parse → chunk → embed → search (agentic=default, direct=fallback) → LLM answer
-      indexing/pipeline.py                 retrieval/strategies/
+9 tables (studio_task added for report generation; status_enums.py is enums, not a table)
+
+RAG: parse → chunk → embed → search (route_and_rewrite LLM routes direct/agentic per query) → LLM answer
+      ingestion/  indexing/pipeline.py       retrieval/service.py (inline dispatch)
 ```
 
 Key modules:
 - `services/agent/` — generic ReAct loop (`AgentRunner` + `AgentConfig`), business-agnostic
-- `services/retrieval/service.py` — `RetrievalService.search()` dispatches between `agentic` (multi-round agent) and `direct` (single-pass hybrid + CRAG)
+- `services/retrieval/service.py` — `RetrievalService.search()` dispatches inline (if/elif) between `direct` (default, single-pass hybrid + CRAG) and `agentic` (multi-round agent); `DEFAULT_MODE="direct"`
 - `services/llm.py` — `LLMProvider` Protocol: `generate()`, `generate_with_tools()`, `generate_stream()`
-- `services/chat.py` — `send_message` (sync) + `stream_message` (SSE async generator)
+- `services/chat.py` — `send_message` (sync) + `stream_message` (SSE async generator); `route_and_rewrite()` picks `direct`/`agentic` per query, `search_mode` can force it
+- `services/ingestion/` — fetch + parse (`parser.py` PDF/MD/TXT registry, `extractors.py` URL via trafilatura + Playwright fallback) → `Document.full_text`
+- `services/studio/` — `StudioTaskRunner` + `ReportWorkflow` (plan→gather→generate→assemble→store); report only, no PPT yet
 - `core/telemetry.py` — Langfuse v4: `@observe()`, `langfuse.openai` auto-tracing, no-op when disabled
-- `services/indexing/pipeline.py` — 3-stage (parse→chunk→embed), independent commits per stage, resume-safe
+- `services/indexing/pipeline.py` — chunk→embed only (parse lives in `ingestion/`); independent commits per stage, resume-safe
 
 ## Key conventions
 
 - **API responses**: `ApiResponse[T]` (`{code, message, data}`); `X-Request-ID` header; `PaginatedResponse[T]` with `meta`
 - **Errors**: service raises typed errors (`NotFoundError`, `ValidationError`, etc.); API never try-except; global handlers in `core/exceptions.py`
-- **Config**: pydantic-settings, `KS_` prefix, `__` nested delimiter. Nested classes: `DatabaseConfig`, `JWTConfig`, `LLMConfig`, `EmbeddingConfig`, `ObjectStorageConfig`, `TelemetryConfig`. `SecretStr` for secrets.
+- **Config**: pydantic-settings, `KS_` prefix, `__` nested delimiter. Nested classes: `DatabaseConfig`, `JWTConfig`, `LLMConfig`, `EmbeddingConfig`, `ObjectStorageConfig`, `TelemetryConfig`, `IngestionConfig`. `SecretStr` for secrets.
 - **DB**: snake_case singular table names; `Base.metadata.create_all()` (v0.x); Alembic at v1.x; pgvector extension auto-created
 - **File naming**: omit redundant layer suffixes — `services/auth.py` not `auth_service.py`, `repositories/user.py` not `user_repository.py` (the directory already provides context)
 - **Logging**: structlog, JSON in prod; log at service layer only; never log in repositories

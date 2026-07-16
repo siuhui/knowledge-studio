@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KS_APP_NAME: Knowledge Studio
+  KS_ENV: test
+  KS_DEBUG: "false"
+  KS_DATABASE__URL: postgresql://postgres:postgres@localhost:5432/knowledge_studio_test
+  KS_DATABASE__PG_VECTOR_EXTENSION: vector
+  KS_OBJECT_STORAGE__ENDPOINT: http://localhost:9000
+  KS_OBJECT_STORAGE__ACCESS_KEY: minioadmin
+  KS_OBJECT_STORAGE__SECRET_KEY: minioadmin
+  KS_OBJECT_STORAGE__BUCKET: ks-source-test
+  KS_OBJECT_STORAGE__REGION: us-east-1
+  KS_OBJECT_STORAGE__PRESIGN_EXPIRE_SECONDS: "900"
+  KS_OBJECT_STORAGE__MAX_UPLOAD_SIZE_BYTES: "20971520"
+  KS_LLM__PROVIDER: openai
+  KS_LLM__API_KEY: sk-test-dummy
+  KS_LLM__CHAT_MODEL: gpt-4o-mini
+  KS_EMBEDDING__API_KEY: sk-test-dummy
+  KS_EMBEDDING__MODEL: text-embedding-v4
+  KS_EMBEDDING__DIMENSION: "1024"
+  KS_EMBEDDING__BATCH_SIZE: "100"
+  KS_JWT__SECRET: ci-test-secret-not-for-production
+  KS_JWT__ALGORITHM: HS256
+  KS_JWT__EXPIRY_MINUTES: "1440"
+  KS_CORS_ORIGINS: '["http://localhost:3000"]'
+  KS_AUTO_CREATE_TABLES: "true"
+  KS_AUTO_CREATE_BUCKET: "false"
+  KS_TELEMETRY__ENABLED: "false"
+
+jobs:
+  backend-unit:
+    name: backend · unit (lint · type · fast tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy (strict)
+        run: mypy app/
+
+      - name: Pytest (unit)
+        run: pytest tests/unit --tb=short
+
+  backend-integration:
+    name: backend · integration (db-backed)
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    defaults:
+      run:
+        working-directory: apps/api
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: knowledge_studio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Pytest (integration)
+        run: pytest tests/integration --tb=short
+
+  frontend:
+    name: frontend (lint · type · test · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.8.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Vitest
+        run: pnpm test -- --run
+
+      - name: Build
+        run: pnpm build

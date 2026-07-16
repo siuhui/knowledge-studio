@@ -4,13 +4,12 @@
 
 ```
 User ──1:N──> KnowledgeBase ──1:N──> Source ──1:N──> Document ──1:N──> Chunk
-                                            │                      │
-                                     ChatSession ──1:N──> ChatMessage
-
-Document ──1:1──> DocumentIndexStatus  (chunk/embed 生命周期追踪)
+                  │                                              │
+                  ├─1:N──> ChatSession ──1:N──> ChatMessage      │
+                  └─1:N──> StudioTask              Document ──1:1─┴─> DocumentIndexStatus
 ```
 
-9 张表。身份认证 ≠ 权限鉴权——有 User，但**没有** Team / Role / Permission / Audit。
+9 张表（ChatSession 挂在 KnowledgeBase 下，非 Source）。身份认证 ≠ 权限鉴权——有 User，但**没有** Team / Role / Permission / Audit。
 
 ---
 
@@ -126,6 +125,30 @@ Source `status` 反映配置有效性（S3 对象还在吗？URL 可访问吗？
 | content | text | 消息内容 |
 | citations | JSON | 引用来源列表 |
 | created_at | datetime | |
+
+## 9. studio_task（Studio 产出任务）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID | PK |
+| knowledge_base_id | UUID FK → knowledge_base (CASCADE, indexed) | 所属知识库 |
+| user_id | UUID FK → user | 所属用户 |
+| task_type | str(20) | `report`（v0.1.0 仅报告；`ppt`/`analysis` 预留） |
+| title | str(255) | 产出物标题 |
+| config | JSON | 任务配置（instruction / document_ids / style / length 等） |
+| status | str(20) | `pending` → `running` → `completed` / `failed` |
+| progress | float | 0.0 ~ 1.0 |
+| status_message | str(500)? | 当前阶段描述，如"正在收集第 2/3 章的素材..." |
+| output_format | str(20) | `markdown`（默认；v0.1.0 只产出 markdown） |
+| output_s3_key | str(500)? | MinIO object key（`studio/{kb}/{task}/report.md`） |
+| output_metadata | JSON? | `{ file_size, char_count, chapter_count }` |
+| error_message | str(2000)? | 失败详情 |
+| started_at | datetime? | 开始执行时间 |
+| completed_at | datetime? | 完成时间 |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+Studio 是数据消费层：输入知识库文档，输出文件。`StudioTaskRunner` 以 FastAPI BackgroundTasks 异步执行 `ReportWorkflow`（plan → gather → generate → assemble → store），前端轮询 `progress`。v0.1.0 只实现 report，PPT 未做。
 
 ---
 

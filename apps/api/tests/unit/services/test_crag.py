@@ -1,4 +1,10 @@
-"""Unit tests for CRAG (Corrective RAG) relevance evaluation and decision flow."""
+"""Unit tests for CRAG (Corrective RAG) relevance evaluation and decision flow.
+
+Pure unit tests: the LLM is mocked and ``RetrievalService.search`` is
+monkeypatched, so ``crag_evaluate_and_act`` never touches the DB — a
+``MagicMock()`` stands in for the ``Session`` (only ever passed through to the
+patched search). No Postgres needed.
+"""
 
 from unittest.mock import MagicMock
 
@@ -118,12 +124,12 @@ class TestGenerateSupplementQuery:
 
 
 class TestCragEvaluateAndAct:
-    def test_crag_not_found_after_retry(self, db):
+    def test_crag_not_found_after_retry(self):
         """retry_count>=1 with empty results → not_found."""
         retrieval = RetrievalQueryResponse(query="test", results=[])
 
         result = crag_evaluate_and_act(
-            db,
+            MagicMock(),
             query="test query",
             retrieval=retrieval,
             retry_count=1,
@@ -134,7 +140,7 @@ class TestCragEvaluateAndAct:
         assert result.action == "not_found"
         assert result.message is not None
 
-    def test_crag_irrelevant_then_correct_query(self, db):
+    def test_crag_irrelevant_then_correct_query(self):
         """First attempt irrelevant → correct query → re-search → evaluate again."""
         chunks = [_make_chunk("doc-1:c0", "Off-topic content about databases.")]
 
@@ -155,7 +161,7 @@ class TestCragEvaluateAndAct:
             )
 
             result = crag_evaluate_and_act(
-                db,
+                MagicMock(),
                 query="How long do JWT tokens last?",
                 retrieval=retrieval,
                 retry_count=0,
@@ -166,14 +172,14 @@ class TestCragEvaluateAndAct:
         # After correction → empty results + retry_count=1 → not_found
         assert result.action == "not_found"
 
-    def test_crag_relevant_straight_through(self, db):
+    def test_crag_relevant_straight_through(self):
         """Relevant results should pass straight through without correction."""
         chunks = [_make_chunk("doc-1:c0", "JWT tokens expire after 24 hours.")]
         llm = _make_mock_llm('{"grade": "relevant", "reason": "Direct answer found."}')
         retrieval = RetrievalQueryResponse(query="test", results=chunks)
 
         result = crag_evaluate_and_act(
-            db,
+            MagicMock(),
             query="How long do JWT tokens last?",
             retrieval=retrieval,
             retry_count=0,
@@ -184,7 +190,7 @@ class TestCragEvaluateAndAct:
         assert result.action == "answer"
         assert len(result.chunks) == 1
 
-    def test_crag_partial_supplements(self, db):
+    def test_crag_partial_supplements(self):
         """Partial results → generate supplement → merge chunks."""
         chunks = [_make_chunk("doc-1:c0", "JWT is used for auth.", "Doc A")]
 
@@ -209,7 +215,7 @@ class TestCragEvaluateAndAct:
             )
 
             result = crag_evaluate_and_act(
-                db,
+                MagicMock(),
                 query="How long do JWT tokens last?",
                 retrieval=retrieval,
                 retry_count=0,

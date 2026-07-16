@@ -42,6 +42,7 @@ knowledge-base/
 │   │   │   │   ├── chunk.py
 │   │   │   │   ├── chat_session.py
 │   │   │   │   ├── chat_message.py
+│   │   │   │   ├── studio_task.py     #     StudioTask（报告生成任务）
 │   │   │   │   └── status_enums.py    #     DocumentStatus, IndexStageStatus, SourceStatus
 │   │   │   ├── schemas/               #   Pydantic 请求/响应模型
 │   │   │   │   ├── __init__.py
@@ -51,8 +52,9 @@ knowledge-base/
 │   │   │   │   ├── source.py
 │   │   │   │   ├── document.py
 │   │   │   │   ├── upload.py
-│   │   │   │   ├── chat.py            #     ChatRequest（含 search_strategy）, ChatResponse
+│   │   │   │   ├── chat.py            #     ChatRequest（含 search_mode）, ChatResponse
 │   │   │   │   ├── session.py
+│   │   │   │   ├── studio.py          #     StudioTaskCreate/Item/Detail
 │   │   │   │   └── retrieval/         #   检索相关 schema（子包）
 │   │   │   │       ├── __init__.py
 │   │   │   │       ├── response.py    #     RetrievalQueryResponse, RetrievalChunk
@@ -66,7 +68,8 @@ knowledge-base/
 │   │   │   │   ├── document_index_status.py
 │   │   │   │   ├── chunk.py
 │   │   │   │   ├── session.py
-│   │   │   │   └── message.py
+│   │   │   │   ├── message.py
+│   │   │   │   └── studio_task.py
 │   │   │   ├── services/              #   业务逻辑
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── auth.py            #     AuthService
@@ -84,19 +87,30 @@ knowledge-base/
 │   │   │   │   │   ├── types.py       #     AgentConfig, Tool, AgentResult, ToolResult
 │   │   │   │   │   ├── tools.py       #     hybrid_search, read_document, list_documents
 │   │   │   │   │   └── configs.py     #     SEARCH_AGENT_CONFIG, GATHER_AGENT_CONFIG
-│   │   │   │   ├── indexing/          #    入库 pipeline
+│   │   │   │   ├── ingestion/         #    拉取 + 解析（Source → Document.full_text）
 │   │   │   │   │   ├── __init__.py
-│   │   │   │   │   ├── pipeline.py    #     run_index_pipeline（parse → chunk → embed）
-│   │   │   │   │   └── parser.py      #     PARSERS 注册表（PDF/MD/TXT）
-│   │   │   │   └── retrieval/         #   检索服务
+│   │   │   │   │   ├── service.py     #     fetch/download → parse → 触发 index pipeline
+│   │   │   │   │   ├── parser.py      #     PARSERS 注册表（PDF/MD/TXT）
+│   │   │   │   │   └── extractors.py  #     URL 抓取（trafilatura + Playwright 兜底 + SSRF 防护）
+│   │   │   │   ├── indexing/          #    索引 pipeline（chunk → embed）
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   └── pipeline.py    #     run_index_pipeline（结构感知分块 → embed，独立提交/可续跑）
+│   │   │   │   ├── retrieval/         #   检索服务
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── service.py     #     RetrievalService（内联分发 direct/agentic）
+│   │   │   │   │   ├── retriever.py   #     hybrid_retrieve（向量 + 关键词 + RRF）
+│   │   │   │   │   ├── reranker.py    #     identity pass（v0.1.0）
+│   │   │   │   │   ├── citation_builder.py
+│   │   │   │   │   ├── crag.py        #     Corrective-RAG：相关性分级 + 一次纠正检索
+│   │   │   │   │   ├── query_rewriter.py  # 失败检索的 query 纠正
+│   │   │   │   │   └── rewrite.py     #     route_and_rewrite（指代消解 + 复杂度路由 + 词法 query）
+│   │   │   │   └── studio/            #   报告生成（数据消费层）
 │   │   │   │       ├── __init__.py
-│   │   │   │       ├── service.py     #     RetrievalService（内联分发 direct/agentic）
-│   │   │   │       ├── retriever.py   #     hybrid_search（向量 + 关键词 + RRF）
-│   │   │   │       ├── reranker.py    #     identity pass（v0.1.0）
-│   │   │   │       ├── citation_builder.py
-│   │   │   │       ├── crag.py
-│   │   │   │       ├── query_rewriter.py
-│   │   │   │       └── rewrite.py
+│   │   │   │       ├── runner.py      #     StudioTaskRunner — 后台执行 workflow
+│   │   │   │       ├── service.py     #     StudioTask CRUD
+│   │   │   │       ├── types.py       #     ReportConfig, ReportResult
+│   │   │   │       ├── workflows/     #     base.py（Workflow Protocol）, report.py（ReportWorkflow）
+│   │   │   │       └── generators/    #     markdown.py（拼接 + 格式化）
 │   │   │   └── api/                   #   路由（薄层）
 │   │   │       ├── __init__.py
 │   │   │       ├── health.py
@@ -106,21 +120,39 @@ knowledge-base/
 │   │   │       ├── uploads.py         #   presign + complete（scoped to Source）
 │   │   │       ├── documents.py
 │   │   │       ├── chat.py            #   sync + SSE streaming
-│   │   │       └── sessions.py
-│   │   ├── tests/
+│   │   │       ├── sessions.py
+│   │   │       └── studio.py          #   报告任务 create / list / status / download / delete
+│   │   ├── tests/                     #   按 unit / integration 物理分层
 │   │   │   ├── __init__.py
-│   │   │   ├── conftest.py
-│   │   │   ├── api/                   #   路由测试（镜像 app 结构）
-│   │   │   │   ├── test_health.py
-│   │   │   │   ├── test_auth.py
-│   │   │   │   ├── test_knowledge_bases.py
-│   │   │   │   ├── test_sources.py
-│   │   │   │   ├── test_uploads.py
-│   │   │   │   ├── test_chat.py
-│   │   │   │   └── test_sessions.py
-│   │   │   ├── services/              #   服务测试
-│   │   │   │   └── test_agent_runner.py
-│   │   │   └── repositories/          #   仓库测试
+│   │   │   ├── unit/                  #   单元：mock 依赖，无 conftest，不连 DB，秒级（CI: pytest tests/unit）
+│   │   │   │   └── services/
+│   │   │   │       ├── test_agent_runner.py  # ReAct 循环（mock LLM + mock db）
+│   │   │   │       ├── test_crag.py          # CRAG 决策流（mock LLM + RetrievalService）
+│   │   │   │       ├── test_chunking.py      # 结构感知分块
+│   │   │   │       ├── test_parser_markdown.py
+│   │   │   │       └── test_rewrite.py
+│   │   │   ├── integration/           #   集成：真实 Postgres+pgvector（CI: pytest tests/integration）
+│   │   │   │   ├── conftest.py        #     engine/db/client/auth_headers fixture（仅集成测试用）
+│   │   │   │   ├── api/               #     路由测试（镜像 app 结构）
+│   │   │   │   │   ├── test_health.py
+│   │   │   │   │   ├── test_auth.py
+│   │   │   │   │   ├── test_knowledge_bases.py
+│   │   │   │   │   ├── test_sources.py
+│   │   │   │   │   ├── test_uploads.py
+│   │   │   │   │   ├── test_chat.py
+│   │   │   │   │   ├── test_sessions.py
+│   │   │   │   │   └── test_studio.py
+│   │   │   │   └── services/
+│   │   │   │       └── test_agent_tools.py   # 工具真正查 Chunk 表（list/read_document）
+│   │   │   ├── repositories/          #   仓库测试（占位，待补）
+│   │   │   └── eval/                  #   检索评测（Level 1，手动跑，不进 CI）
+│   │   │       ├── corpus/            #     28 篇英文语料，按主题簇构造
+│   │   │       ├── test_set.py        #     EvalQuery + TEST_QUERIES
+│   │   │       ├── seed.py            #     幂等灌库 + anchor 校验
+│   │   │       ├── metrics.py         #     Answer-Ctx Recall / Doc Recall / Hit / MRR
+│   │   │       ├── test_metrics.py    #     metrics 纯函数自测（随评测手动跑）
+│   │   │       ├── retrieval_eval.py  #     Level 1 CLI（只测 direct）
+│   │   │       └── results/           #     带时间戳 JSON，版本对比
 │   │   ├── requirements.txt
 │   │   ├── requirements-dev.txt
 │   │   └── pyproject.toml             #   ruff + mypy + pytest 配置
@@ -141,7 +173,7 @@ knowledge-base/
 │       │   ├── components/            #   复用组件
 │       │   │   ├── ui/                #     基础 UI（Button, Input, Modal, Toast 等）
 │       │   │   ├── layout/            #     布局组件（Navbar, Sidebar）
-│       │   │   └── knowledge-bases/   #     业务组件（KbCard, SessionBar, AddSourceModal 等）
+│       │   │   └── knowledge-bases/   #     业务组件（KbCard, SessionBar, AddSourceModal, StudioPanel, CreateReportModal, ReportViewerModal 等）
 │       │   ├── hooks/                 #   自定义 hooks
 │       │   │   ├── useAuth.tsx
 │       │   │   ├── useToast.tsx
@@ -322,10 +354,13 @@ pip install -r requirements.txt -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
 
 # 测试
-pytest                              # 全部
-pytest tests/api/test_chat.py       # 单文件
-pytest -m "not slow"                # 跳过慢测试
-pytest --tb=short                   # 简短回溯
+pytest tests/unit                              # 单元测试（无需 Postgres，秒级）
+pytest tests/integration                       # 集成测试（需 knowledge_studio_test 库）
+pytest tests/unit tests/integration            # 全部（CI 跑这两条）
+pytest tests/integration/api/test_chat.py      # 单文件
+pytest --tb=short                              # 简短回溯
+# tests/eval 是手动评测（打真实 embedding API），不进 CI：
+#   python -m tests.eval.retrieval_eval --top-k 10
 
 # 代码质量
 ruff check .                        # lint
@@ -745,24 +780,25 @@ export async function api<T>(path: string, options?: RequestInit): Promise<{ dat
 SSE 流通过 `lib/api.ts` 的 `sendMessageStream()` 和 `lib/sse.ts` 的 `parseSSEStream()` 处理：
 
 ```ts
-// lib/sse.ts
-export async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  // ... buffer + parse logic, yield parsed JSON events
+// lib/sse.ts — callback 风格：为每个解析出的事件调用 onEvent，内部缓冲不完整分片
+export async function parseSSEStream(
+  stream: ReadableStream<Uint8Array>,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  // ... reader + TextDecoder + buffer 逻辑，逐行解析 JSON 后 onEvent(event)
 }
 
-// 使用
-const stream = sendMessageStream({ knowledge_base_id, content, search_strategy: "agentic" });
-for await (const event of parseSSEStream(stream)) {
+// 使用（search_mode 目前前端不传，由后端 route_and_rewrite 自动路由 direct/agentic）
+const stream = await sendMessageStream(kbId, content, referenceDocumentIds);
+await parseSSEStream(stream, (event) => {
   switch (event.type) {
     case "agent_progress": /* show agent steps */ break;
     case "token": /* append text */ break;
     case "citation": /* add sources */ break;
     case "done": /* finalize */ break;
   }
-}
+});
 ```
 
 ### 6.5 状态管理
@@ -938,13 +974,13 @@ class Embedder(Protocol):
 
 ### 10.5 检索（Retrieval）
 
-**策略模式**，默认 agentic，可选 hybrid。不加 Elasticsearch / Meilisearch / Pinecone。
+`RetrievalService.search()` 内联分发（if/elif）两种模式 `direct` / `agentic`，由 `route_and_rewrite()` LLM 按查询复杂度逐条路由（`search_mode` 可强制覆盖）。不加 Elasticsearch / Meilisearch / Pinecone。
 
-> 策略设计与架构决策见 @docs/architecture.md §四。
+> 检索模式设计与路由决策见 @docs/architecture.md §四。
 
-#### Hybrid（可选）
+#### Hybrid 检索原语（两种模式共用）
 
-pgvector 向量 + tsvector 关键词 + RRF 融合：
+pgvector 向量 + tsvector 关键词 + RRF 融合。`direct` 单次调用它，`agentic` 的 `hybrid_search` 工具多轮调用它：
 
 ```
 向量检索：ORDER BY embedding <=> query_embedding LIMIT 20
