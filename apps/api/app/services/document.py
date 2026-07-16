@@ -47,7 +47,7 @@ class DocumentService:
         full_text: str,
         title: str,
         source_format: str,
-        source_id: str,
+        source_id: str | None,
         kb_id: str,
         path: str | None = None,
     ) -> str:
@@ -56,6 +56,11 @@ class DocumentService:
         Creates a PROCESSING placeholder first, then fills content and
         transitions to READY. Deduplicates by text_hash within the same KB —
         returns the existing document_id if a match is found.
+
+        ``source_id`` is nullable — it matches Document's own SET-NULL column.
+        The normal ingestion flow always supplies a Source, but callers that
+        bypass upload/URL ingestion (e.g. eval-corpus seeding) may pass None;
+        ``knowledge_base_id`` is the canonical KB reference regardless.
         """
         update_current_span(
             input={"title": title, "source_format": source_format, "source_id": source_id, "kb_id": kb_id},

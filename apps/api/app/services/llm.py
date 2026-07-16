@@ -13,6 +13,7 @@ import structlog
 from pydantic import BaseModel
 
 from app.config import settings
+from app.core.telemetry import is_telemetry_active
 
 if TYPE_CHECKING:
     from anthropic import Anthropic, AsyncAnthropic
@@ -119,11 +120,11 @@ class OpenAIProvider:
         self._async_client: Any = None  # langfuse.openai.AsyncOpenAI (lazy)
 
     def _get_client(self) -> Any:
-        """Lazy-init the OpenAI client — uses Langfuse tracing when available."""
+        """Lazy-init the OpenAI client — uses Langfuse tracing when active."""
         if self._client is None:
-            try:
+            if is_telemetry_active():
                 from langfuse.openai import OpenAI  # type: ignore[attr-defined]
-            except ImportError:
+            else:
                 from openai import OpenAI
 
             self._client = OpenAI(
@@ -133,11 +134,11 @@ class OpenAIProvider:
         return self._client
 
     def _get_async_client(self) -> Any:
-        """Lazy-init the AsyncOpenAI client — uses Langfuse tracing when available."""
+        """Lazy-init the AsyncOpenAI client — uses Langfuse tracing when active."""
         if self._async_client is None:
-            try:
+            if is_telemetry_active():
                 from langfuse.openai import AsyncOpenAI  # type: ignore[attr-defined]
-            except ImportError:
+            else:
                 from openai import AsyncOpenAI
 
             self._async_client = AsyncOpenAI(

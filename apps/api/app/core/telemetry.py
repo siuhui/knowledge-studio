@@ -114,7 +114,20 @@ __all__ = [
     "create_score",
     "init_telemetry",
     "shutdown_telemetry",
+    "is_telemetry_active",
 ]
+
+
+def is_telemetry_active() -> bool:
+    """Return True once ``init_telemetry()`` has registered a live client.
+
+    Call sites that want Langfuse auto-tracing (e.g. ``langfuse.openai``
+    wrappers) should gate on this rather than on whether the ``langfuse``
+    package merely imports.  When it returns False, the wrapped client would
+    fall back to a default ``Langfuse()`` built from ``LANGFUSE_*`` env vars —
+    which this project never sets — emitting a "client disabled" warning.
+    """
+    return _client is not None
 
 
 # ── Guard ────────────────────────────────────────────────────────────────────

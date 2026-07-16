@@ -183,9 +183,15 @@ class RetrievalService:
         # Build agent_progress SSE events from steps
         agent_steps = _build_agent_progress_events(result.steps)
 
-        # Convert artifacts to RetrievalChunk list
+        # Convert artifacts to RetrievalChunk list.
+        #
+        # Dedup by span (doc_id, start_offset, end_offset), NOT by doc_id.
+        # An agent can legitimately surface multiple distinct chunks from the
+        # same document across rounds — doc-level dedup would collapse them to
+        # one and drop real context.  Span dedup only removes exact repeats
+        # (the same chunk re-hit by near-identical queries across rounds).
         results: list[RetrievalChunk] = []
-        seen_ids: set[str] = set()
+        seen_spans: set[tuple[str, int, int]] = set()
 
         for i, a in enumerate(result.collected_artifacts):
             data = a.data
@@ -196,9 +202,12 @@ class RetrievalService:
             if not content:
                 continue
 
-            if doc_id in seen_ids:
+            start_offset, end_offset = _artifact_offsets(data, content)
+
+            span = (doc_id, start_offset, end_offset)
+            if span in seen_spans:
                 continue
-            seen_ids.add(doc_id)
+            seen_spans.add(span)
 
             rank_val = data.get("rank")
             score = float(rank_val) if isinstance(rank_val, (int, float)) else 1.0
@@ -208,6 +217,8 @@ class RetrievalService:
                 document_title=title,
                 chunk_index=0,
                 content_snippet=content[:200],
+                start_offset=start_offset,
+                end_offset=end_offset,
             )
             chunk_id = f"{doc_id}:a{i}"
 
@@ -227,9 +238,13 @@ class RetrievalService:
                 doc_id = str(data.get("doc_id", ""))
                 title = str(data.get("title", "Unknown"))
                 snippet = str(data.get("snippet", data.get("content", "")))
-                if not doc_id or doc_id in seen_ids:
+                if not doc_id:
                     continue
-                seen_ids.add(doc_id)
+                start_offset, end_offset = _artifact_offsets(data, snippet[:500])
+                span = (doc_id, start_offset, end_offset)
+                if span in seen_spans:
+                    continue
+                seen_spans.add(span)
                 results.append(
                     RetrievalChunk(
                         chunk_id=doc_id,
@@ -241,6 +256,8 @@ class RetrievalService:
                             document_title=title,
                             chunk_index=0,
                             content_snippet=snippet[:200],
+                            start_offset=start_offset,
+                            end_offset=end_offset,
                         ),
                     )
                 )
@@ -262,6 +279,27 @@ class RetrievalService:
             results=results,
             agent_steps=agent_steps,
         )
+
+
+# ── Artifact offset extraction ─────────────────────────────────────────────────
+
+
+def _artifact_offsets(data: dict[str, Any], content: str) -> tuple[int, int]:
+    """Recover (start_offset, end_offset) from an agent tool artifact.
+
+    Two artifact shapes carry position info:
+    - hybrid_search: ``start_offset`` + ``end_offset`` (authoritative, from Chunk)
+    - read_document: ``offset`` + ``length`` (end derived as offset + length)
+
+    list_documents artifacts have no position — fall back to (0, len(content)).
+    """
+    if "start_offset" in data and "end_offset" in data:
+        return int(data["start_offset"]), int(data["end_offset"])
+    if "offset" in data:
+        start = int(data["offset"])
+        length = int(data["length"]) if "length" in data else len(content)
+        return start, start + length
+    return 0, len(content)
 
 
 # ── Agent progress event builder ──────────────────────────────────────────────

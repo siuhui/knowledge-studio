@@ -118,7 +118,7 @@ v0.1.0 完成态
 | web_search / media_crawler | v0.2.0 | 信息来源扩展需独立设计调度层 |
 | mixed 检索策略 | v0.2.0 | 依赖 agentic + hybrid 先稳定 |
 | 并行 tool calls | v0.2.0 | 依赖 LLM provider 的 native parallel tool calling |
-| 评测体系 | v0.2.0 | 先让功能可用，再系统化评测 |
+| Level 2 回答评测（LLM-as-Judge）| v0.2.0 | 先立检索层组件级指标（Level 1 进 v0.1.0），回答评测紧跟其后 |
 
 ---
 
@@ -873,53 +873,61 @@ ChatService                          StudioTaskRunner
 
 ## 八、评测体系
 
-回答"检索质量好不好？回答准不准？"需要分层评测：
+回答"检索质量好不好？回答准不准？"需要分层评测。**Level 1（检索评测）进 v0.1.0**，Level 2（回答评测）留到 v0.2.0。
 
-### 8.1 Level 1：检索评测（组件级）
+> Level 1 的落地方案（语料构造、anchor 标注、灌库、判定口径、CLI）见 @docs/retrieval-eval-plan.md，是本节的唯一实现信源。本节只讲顶层设计决策。
 
-**测试集**：对 KB 预埋 N 个问题，每个问题标注相关文档：
+### 8.1 Level 1：检索评测（组件级，v0.1.0）
+
+**判定口径：passage 级 offset-overlap，不是文档级。** 一篇文档几千字，真正回答问题的只有一两句；「命中文档任意 chunk 就算命中」测的是相关文档召回率，数字虚高。golden 是字符区间 `(doc_key, start, end)`，一个 retrieved chunk 命中 ⟺ 同文档 AND 区间重叠。
+
+**测试集**：`EvalQuery` dataclass —— 每题标注 `answer_anchors`（逐字判别性短语），seed 时 `full_text.find()` 解析成 golden offset span：
 
 ```python
-# tests/eval/test_set.py
-TEST_QUERIES = [
-    {
-        "question": "安全架构中的认证机制是什么？",
-        "relevant_docs": ["doc-A", "doc-B"],
-        "relevant_chunks": ["chunk-3", "chunk-7"],
-        "difficulty": "medium",
-    },
-    # ...
-]
+# apps/api/tests/eval/test_set.py
+@dataclass(frozen=True)
+class EvalQuery:
+    id: str
+    question: str
+    relevant_docs: tuple[str, ...]      # 文档 key，用于 Doc Recall 对比口径
+    answer_anchors: tuple[str, ...]     # 逐字短语，seed 时解析成 golden span
+    difficulty: str                     # easy | medium | hard
 ```
 
-**指标**：Recall@K、MRR、NDCG@K
+**指标**（四个并列上报，k=5 主 / 10 辅）：Answer-Context Recall@k（主，诚实口径）、Doc Recall@k（次，量化文档级高估）、Hit@k、MRR@k。同时报 Answer-Ctx 和 Doc Recall，量化「文档级口径高估了多少」。
 
-**命令**：`python -m tests.eval.retrieval_eval --strategy agentic --kb-id xxx`
+**只测 `direct`**。agentic 复用同一套 `hybrid_retrieve` + RRF 检索原语（agent 的 `hybrid_search` 工具内部调它），direct 是这套共享栈的单次直接暴露，跑 direct 就把组件级检索质量测干净了。agentic 多出来的是编排层（多轮、query 改写、read_document），其产物是「答案」而非「排好序的 chunk 列表」，且非确定、出口按 doc 去重——它的收益归 Level 2 回答评测衡量，不套 chunk 级 recall。
 
-### 8.2 Level 2：回答评测（端到端）
+**命令**：`python -m tests.eval.retrieval_eval --top-k 10`（检索出 10 条，切片算 @5/@10）
+
+### 8.2 Level 2：回答评测（端到端，v0.2.0）
 
 **方法**：LLM-as-Judge（用更强的模型当裁判）
 
 **指标**：Correctness、Faithfulness（有无幻觉）、Citation Accuracy、Completeness
 
-**命令**：`python -m tests.eval.answer_eval --strategy agentic --kb-id xxx`
+**命令**：`python -m tests.eval.answer_eval --mode agentic`
 
 ### 8.3 目录
 
 ```
-tests/eval/
+apps/api/tests/eval/
   __init__.py
-  test_set.py              # 测试集定义
-  retrieval_eval.py        # Level 1: Recall@K, MRR, NDCG
-  answer_eval.py           # Level 2: LLM-as-Judge
-  results/                 # 评测结果输出（JSON），含历史版本对比
+  corpus/                  # 英文语料，按主题簇构造，簇内互为 distractor
+  test_set.py              # EvalQuery 列表（question → anchors + difficulty）
+  seed.py                  # 幂等灌库 + validate_anchors() 标注校验闸
+  metrics.py               # 四个指标 + overlap()，纯函数
+  retrieval_eval.py        # Level 1 CLI 主入口
+  answer_eval.py           # Level 2: LLM-as-Judge（v0.2.0）
+  results/                 # 带时间戳 JSON，版本对比
+  test_metrics.py          # 纯函数单测，进 CI
 ```
 
 ### 8.4 执行频率
 
 ```
-pytest -m "not slow"               # CI 每次都跑（单元测试）
-python -m tests.eval.*_eval         # 手动跑 / 大改动后跑
+pytest -m "not slow"               # CI 每次都跑（含 test_metrics.py 纯函数单测）
+python -m tests.eval.*_eval         # 手动跑 / 大改动后跑（依赖实时 Postgres + embedding API，不进 CI）
 results/ 目录存版本对比             # 追踪退化
 ```
 
@@ -962,13 +970,15 @@ Phase 3: v0.1.0 剩余
   ── Chunk: 结构化元素保护（标题、代码块、表格不跨边界切分）
   ── BackgroundTasks 执行 + 前端轮询进度
   ── Studio API (create / status / download / list / delete)
+  ── Level 1 检索评测: apps/api/tests/eval/ (corpus, test_set, seed, metrics, retrieval_eval)
+       方案见 @docs/retrieval-eval-plan.md
   前端: StrategySelector + StudioPanel + TaskCard
 
 Phase 4: v0.2.0
   ── Web Search
   ── Git 仓库同步
-  ── tests/eval/ (test_set.py, retrieval_eval.py, answer_eval.py)
-  ── 评测结果汇总脚本
+  ── Level 2 回答评测: answer_eval.py (LLM-as-Judge)
+  ── 评测结果汇总脚本 + CI 集成
 ```
 
 每个 Phase 独立上线、不破坏现有功能。
@@ -1007,7 +1017,7 @@ Phase 4: v0.2.0
   schemas/studio.py
   api/studio.py
   tests/api/test_studio.py
-  tests/eval/                   # test_set.py, retrieval_eval.py, answer_eval.py（v0.2.0）
+  apps/api/tests/eval/          # Level 1 (v0.1.0): corpus, test_set, seed, metrics, retrieval_eval; Level 2 answer_eval（v0.2.0）
 
 修改:
   services/indexing/pipeline.py  # chunk+embed 按需触发，入库只做 parse

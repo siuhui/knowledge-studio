@@ -7,6 +7,7 @@ Embedding calls are auto-traced by Langfuse via ``langfuse.openai.OpenAI``.
 from typing import Any, Protocol
 
 from app.config import settings
+from app.core.telemetry import is_telemetry_active
 
 
 class Embedder(Protocol):
@@ -33,11 +34,11 @@ class OpenAIEmbedder:
         return self._dimension
 
     def _get_client(self) -> Any:
-        """Lazy-init the OpenAI client — uses Langfuse tracing when available."""
+        """Lazy-init the OpenAI client — uses Langfuse tracing when active."""
         if self._client is None:
-            try:
+            if is_telemetry_active():
                 from langfuse.openai import OpenAI  # type: ignore[attr-defined]
-            except ImportError:
+            else:
                 from openai import OpenAI
 
             self._client = OpenAI(
